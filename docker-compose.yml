@@ -1,30 +1,34 @@
 services:
   # ── Postgres ─────────────────────────────────────────────────────────────
-  # Default: always starts.
-  # Local dev: run only postgres here, then `go run ./cmd/api` in the shell.
   postgres:
     image: postgres:17-alpine
+    container_name: courtscore_db
     restart: unless-stopped
     environment:
       POSTGRES_USER: courtscore
       POSTGRES_PASSWORD: courtscore
       POSTGRES_DB: courtscore
     ports:
-      - "5432:5432"
+      # Sadece sunucu içinden (localhost) erişilebilir, dış internete kapalı
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 350M # 1 GB RAM sunucuyu korumak için sınır
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U courtscore"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # ── API (optional, profile=full) ─────────────────────────────────────────
-  # Use for running everything in Docker:
-  #   docker compose --profile full up --build
+  # ── API ──────────────────────────────────────────────────────────────────
   api:
-    profiles: ["full"]
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: courtscore_api
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -35,8 +39,11 @@ services:
       PORT: "8080"
       DATABASE_URL: postgres://courtscore:courtscore@postgres:5432/courtscore?sslmode=disable
     env_file:
-      - path: .env
-        required: false      # ok to skip .env when all vars are set above
+      - .env
+    deploy:
+      resources:
+        limits:
+          memory: 250M # Go API için oldukça cömert bir sınır
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 10s
