@@ -1,0 +1,8 @@
+# Secrets — never commit
+.env
+
+# Build output
+bin/
+
+# macOS
+.DS_Store
