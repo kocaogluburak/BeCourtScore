@@ -69,6 +69,22 @@ func (s *Service) AuthWithProvider(ctx context.Context, providerName, credential
 		if err != nil {
 			return Session{}, User{}, false, err
 		}
+	} else {
+		// Backfill name/surname from provider if the user hasn't set them yet.
+		var backfill UpdateInput
+		if user.Name == nil && ext.GivenName != "" {
+			v := ext.GivenName
+			backfill.Name = &v
+		}
+		if user.Surname == nil && ext.FamilyName != "" {
+			v := ext.FamilyName
+			backfill.Surname = &v
+		}
+		if backfill.Name != nil || backfill.Surname != nil {
+			if updated, updErr := s.repo.updateUser(ctx, user.ID, backfill); updErr == nil {
+				user = updated
+			}
+		}
 	}
 
 	session, err := s.issueSession(ctx, user.ID)

@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -9,8 +10,18 @@ import (
 	"courtscore/internal/platform/sse"
 )
 
+// svcFacade is the subset of Service methods used by the HTTP handler.
+// It exists so tests can substitute a stub without hitting the database.
+type svcFacade interface {
+	AuthWithProvider(ctx context.Context, providerName, credential string) (Session, User, bool, error)
+	RefreshSession(ctx context.Context, rawRefreshToken string) (Session, User, error)
+	RevokeSession(ctx context.Context, rawRefreshToken string) error
+	GetUser(ctx context.Context, userID string) (User, error)
+	UpdateUser(ctx context.Context, userID string, in UpdateInput) (User, error)
+}
+
 type handler struct {
-	svc *Service
+	svc svcFacade
 	hub *sse.Hub
 }
 

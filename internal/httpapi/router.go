@@ -6,6 +6,7 @@ import (
 
 	"courtscore/internal/modules/identity"
 	"courtscore/internal/modules/score"
+	"courtscore/internal/modules/social"
 	"courtscore/internal/modules/tournament"
 	"courtscore/internal/platform/authkit"
 	"courtscore/internal/platform/config"
@@ -16,7 +17,7 @@ import (
 )
 
 // New builds and returns the root HTTP handler with all routes mounted.
-func New(cfg config.Config, identitySvc *identity.Service, hub *sse.Hub) http.Handler {
+func New(cfg config.Config, identitySvc *identity.Service, scoreSvc *score.Service, socialSvc *social.Service, hub *sse.Hub) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RealIP)
@@ -33,7 +34,8 @@ func New(cfg config.Config, identitySvc *identity.Service, hub *sse.Hub) http.Ha
 	authMW := authkit.Middleware(cfg.JWTSecret)
 
 	identity.Mount(r, identitySvc, hub, authMW)
-	score.Mount(r)
+	score.Mount(r, scoreSvc, authMW)
+	social.Mount(r, socialSvc, hub, authMW)
 	tournament.Mount(r)
 
 	return r

@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"google.golang.org/api/idtoken"
 )
@@ -44,11 +45,27 @@ func extractGoogleIdentity(claims map[string]any) (ExternalIdentity, error) {
 	emailVerified, _ := claims["email_verified"].(bool)
 	picture, _ := claims["picture"].(string)
 
+	givenName, _ := claims["given_name"].(string)
+	familyName, _ := claims["family_name"].(string)
+
+	// Fallback: if given_name/family_name absent, split the full "name" claim.
+	if givenName == "" && familyName == "" {
+		if fullName, _ := claims["name"].(string); fullName != "" {
+			parts := strings.SplitN(fullName, " ", 2)
+			givenName = parts[0]
+			if len(parts) == 2 {
+				familyName = parts[1]
+			}
+		}
+	}
+
 	return ExternalIdentity{
 		Provider:        "google",
 		ProviderSubject: sub,
 		Email:           email,
 		EmailVerified:   emailVerified,
 		Picture:         picture,
+		GivenName:       givenName,
+		FamilyName:      familyName,
 	}, nil
 }

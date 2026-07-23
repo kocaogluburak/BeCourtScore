@@ -22,6 +22,8 @@ func TestExtractGoogleIdentity_Valid(t *testing.T) {
 		"email":          "test@example.com",
 		"email_verified": true,
 		"picture":        "https://example.com/photo.jpg",
+		"given_name":     "Ada",
+		"family_name":    "Lovelace",
 	}
 
 	got, err := extractGoogleIdentity(claims)
@@ -42,6 +44,50 @@ func TestExtractGoogleIdentity_Valid(t *testing.T) {
 	}
 	if got.Picture != "https://example.com/photo.jpg" {
 		t.Errorf("Picture: got %q", got.Picture)
+	}
+	if got.GivenName != "Ada" {
+		t.Errorf("GivenName: got %q, want %q", got.GivenName, "Ada")
+	}
+	if got.FamilyName != "Lovelace" {
+		t.Errorf("FamilyName: got %q, want %q", got.FamilyName, "Lovelace")
+	}
+}
+
+func TestExtractGoogleIdentity_NameFallback(t *testing.T) {
+	// When given_name/family_name are absent, "name" claim is split.
+	claims := map[string]any{
+		"sub":  "google-sub-456",
+		"name": "Ada Lovelace",
+	}
+
+	got, err := extractGoogleIdentity(claims)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.GivenName != "Ada" {
+		t.Errorf("GivenName fallback: got %q, want %q", got.GivenName, "Ada")
+	}
+	if got.FamilyName != "Lovelace" {
+		t.Errorf("FamilyName fallback: got %q, want %q", got.FamilyName, "Lovelace")
+	}
+}
+
+func TestExtractGoogleIdentity_SingleNameFallback(t *testing.T) {
+	// Single-word name: all goes to GivenName, FamilyName stays empty.
+	claims := map[string]any{
+		"sub":  "google-sub-789",
+		"name": "Madonna",
+	}
+
+	got, err := extractGoogleIdentity(claims)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.GivenName != "Madonna" {
+		t.Errorf("GivenName: got %q, want %q", got.GivenName, "Madonna")
+	}
+	if got.FamilyName != "" {
+		t.Errorf("FamilyName should be empty, got %q", got.FamilyName)
 	}
 }
 

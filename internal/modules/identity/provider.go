@@ -9,6 +9,8 @@ type ExternalIdentity struct {
 	Email           string
 	EmailVerified   bool
 	Picture         string // optional profile picture URL
+	GivenName       string // first name from provider (optional)
+	FamilyName      string // last name from provider (optional)
 }
 
 // IdentityProvider verifies a provider-specific credential and returns a

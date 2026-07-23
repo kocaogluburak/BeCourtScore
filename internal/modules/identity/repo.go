@@ -73,14 +73,22 @@ func (r *repo) createUserWithIdentity(ctx context.Context, ext ExternalIdentity)
 	if ext.Picture != "" {
 		iconArg = &ext.Picture
 	}
+	var nameArg *string
+	if ext.GivenName != "" {
+		nameArg = &ext.GivenName
+	}
+	var surnameArg *string
+	if ext.FamilyName != "" {
+		surnameArg = &ext.FamilyName
+	}
 
 	const insertUser = `
-		INSERT INTO users (email, email_verified, profile_icon)
-		VALUES ($1, $2, $3)
+		INSERT INTO users (email, email_verified, profile_icon, name, surname)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, email, email_verified, nickname, name, surname,
 		          profile_icon, created_at, updated_at`
 
-	err = tx.QueryRow(ctx, insertUser, emailArg, ext.EmailVerified, iconArg).
+	err = tx.QueryRow(ctx, insertUser, emailArg, ext.EmailVerified, iconArg, nameArg, surnameArg).
 		Scan(&u.ID, &u.Email, &u.EmailVerified, &u.Nickname, &u.Name, &u.Surname,
 			&u.ProfileIcon, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {

@@ -12,6 +12,8 @@ import (
 	"courtscore/internal/httpapi"
 	"courtscore/internal/migrate"
 	"courtscore/internal/modules/identity"
+	"courtscore/internal/modules/score"
+	"courtscore/internal/modules/social"
 	"courtscore/internal/platform/config"
 	"courtscore/internal/platform/db"
 	"courtscore/internal/platform/sse"
@@ -50,10 +52,14 @@ func main() {
 	})
 	identitySvc.RegisterProvider("google", identity.NewGoogleProvider(cfg.GoogleClientIDs))
 
+	// Social (friendships) + score (match history) services
+	socialSvc := social.NewService(pool)
+	scoreSvc := score.NewService(pool, socialSvc)
+
 	// HTTP server
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      httpapi.New(cfg, identitySvc, hub),
+		Handler:      httpapi.New(cfg, identitySvc, scoreSvc, socialSvc, hub),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 0, // SSE connections stream indefinitely
 		IdleTimeout:  60 * time.Second,
