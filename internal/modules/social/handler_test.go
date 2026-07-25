@@ -17,7 +17,7 @@ import (
 
 type stubService struct {
 	searchResults []SearchResult
-	profile       UserSummary
+	profile       UserProfile
 	friendship    Friendship
 	friends       []UserSummary
 	requests      []IncomingRequest
@@ -38,7 +38,7 @@ func (s *stubService) SearchUsers(_ context.Context, _, q string, _, _ int) ([]S
 	return s.searchResults, s.total, nil
 }
 
-func (s *stubService) GetUserProfile(_ context.Context, _, _ string) (UserSummary, error) {
+func (s *stubService) GetUserProfile(_ context.Context, _, _ string) (UserProfile, error) {
 	return s.profile, s.profileErr
 }
 
@@ -116,15 +116,63 @@ func TestSearchUsers_Returns400OnShortQuery(t *testing.T) {
 
 // ── GET /v1/users/{userID} ───────────────────────────────────────────────────
 
-func TestGetUserProfile_Returns403WhenNotFriends(t *testing.T) {
-	svc := &stubService{profileErr: ErrForbidden}
+func TestGetUserProfile_Returns200WithFriendshipStatus(t *testing.T) {
+	svc := &stubService{
+		profile: UserProfile{
+			UserSummary:      UserSummary{ID: "u2", Nickname: ptr("bob")},
+			FriendshipStatus: "accepted",
+		},
+	}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.getUserProfile(w, authedRequest(http.MethodGet, "/v1/users/u2", nil, "u1"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got UserProfile
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.FriendshipStatus != "accepted" {
+		t.Errorf("friendship_status: got %q, want %q", got.FriendshipStatus, "accepted")
+	}
+}
+
+func TestGetUserProfile_Returns200ForNonFriendWithNoneStatus(t *testing.T) {
+	svc := &stubService{
+		profile: UserProfile{
+			UserSummary:      UserSummary{ID: "u9", Nickname: ptr("stranger")},
+			FriendshipStatus: "none",
+		},
+	}
 	h := &handler{svc: svc, hub: sse.NewHub()}
 
 	w := httptest.NewRecorder()
 	h.getUserProfile(w, authedRequest(http.MethodGet, "/v1/users/u9", nil, "u1"))
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status: got %d, want 403", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got UserProfile
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.FriendshipStatus != "none" {
+		t.Errorf("friendship_status: got %q, want %q", got.FriendshipStatus, "none")
+	}
+}
+
+func TestGetUserProfile_Returns404WhenNotFound(t *testing.T) {
+	svc := &stubService{profileErr: ErrNotFound}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.getUserProfile(w, authedRequest(http.MethodGet, "/v1/users/u9", nil, "u1"))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", w.Code)
 	}
 }
 

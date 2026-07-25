@@ -89,27 +89,36 @@ func (r *repo) insert(ctx context.Context, createdBy string, in CreateInput) (Ma
 
 // listForUser returns matches where the user is a participant or the recorder,
 // newest first, with the total count for pagination.
+// Uses UNION of three index-driven legs instead of OR across columns.
 func (r *repo) listForUser(ctx context.Context, userID string, f ListFilter, limit, offset int) ([]Match, int64, error) {
-	where := `(created_by = $1 OR player_a_user_id = $1 OR player_b_user_id = $1)`
+	union := `
+		SELECT ` + matchCols + ` FROM matches WHERE created_by = $1
+		UNION
+		SELECT ` + matchCols + ` FROM matches WHERE player_a_user_id = $1
+		UNION
+		SELECT ` + matchCols + ` FROM matches WHERE player_b_user_id = $1`
 	args := []any{userID}
+	filter := ""
 
 	if f.Sport != "" {
 		args = append(args, f.Sport)
-		where += fmt.Sprintf(" AND sport = $%d", len(args))
+		filter += fmt.Sprintf(" AND sport = $%d", len(args))
 	}
 	if f.Query != "" {
 		args = append(args, "%"+f.Query+"%")
-		where += fmt.Sprintf(" AND (player_a_name ILIKE $%d OR player_b_name ILIKE $%d)", len(args), len(args))
+		filter += fmt.Sprintf(" AND (player_a_name ILIKE $%d OR player_b_name ILIKE $%d)", len(args), len(args))
 	}
 
 	var total int64
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM matches WHERE `+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM (`+union+`) m WHERE TRUE`+filter, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count matches: %w", err)
 	}
 
 	args = append(args, limit, offset)
-	q := fmt.Sprintf(`SELECT %s FROM matches WHERE %s ORDER BY played_at DESC LIMIT $%d OFFSET $%d`,
-		matchCols, where, len(args)-1, len(args))
+	q := fmt.Sprintf(
+		`SELECT %s FROM (%s) m WHERE TRUE%s ORDER BY played_at DESC LIMIT $%d OFFSET $%d`,
+		matchCols, union, filter, len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {

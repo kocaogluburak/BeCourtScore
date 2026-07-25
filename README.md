@@ -156,6 +156,45 @@ POST /v1/friends/requests/{id}/accept      → 200 (addressee only)
 POST /v1/friends/requests/{id}/reject      → 200 (addressee only)
 ```
 
+### Tournaments
+
+All endpoints require Bearer. An organizer opens a tournament (single-elimination or
+round-robin), shares the public `slug` link plus the `join_code`, participants join, the
+organizer locks & draws the fixture, then results are entered by the organizer (final) or by
+a player (pending the opponent's confirmation). Status flow:
+`REGISTRATION → LOCKED → ONGOING → COMPLETED`.
+
+```
+POST /v1/tournaments
+Body: {"name","sport":"TENNIS|PADEL|SQUASH|PING_PONG",
+       "format":"SINGLE_ELIM|ROUND_ROBIN",
+       "max_participants"?:2..128 (default 32), "starts_at"?}
+→ 201 tournament object (join_code returned to organizer only)
+
+GET  /v1/tournaments/mine?page=&page_size=&q=&sport=  → tournaments I organize or joined (filtered)
+GET  /v1/tournaments/{slug}                       → summary + is_organizer/has_joined
+POST /v1/tournaments/{slug}/join                  → {"join_code":"..."}
+     → 200 participant | 403 wrong code | 409 full/already-joined/closed
+GET  /v1/tournaments/{id}/participants?page=      → paginated participants
+DELETE /v1/tournaments/{id}/participants/me       → leave (204, REGISTRATION only)
+
+POST /v1/tournaments/{id}/lock                    → organizer only, ≥2 participants
+POST /v1/tournaments/{id}/draw
+     Body: {"mode":"RANDOM"} | {"mode":"MANUAL","seeding":["participantId", ...]}
+     → 200 bracket (MANUAL keeps the listed order top-to-bottom)
+GET  /v1/tournaments/{id}/bracket                 → rounds (+ standings for round-robin)
+
+POST /v1/tournaments/matches/{matchId}/result
+     Body: {"winner_participant_id","score_summary"?:"6-4 3-6 7-5"}
+     → organizer completes directly; a player's report goes PENDING_CONFIRMATION
+POST /v1/tournaments/matches/{matchId}/confirm
+     Body: {"approve":true|false}                 → opponent or organizer; reporter cannot self-confirm
+```
+
+SSE events (see below): `tournament.participant_joined`, `tournament.locked`,
+`tournament.draw_completed`, `tournament.match_pending_confirmation`,
+`tournament.match_completed`, `tournament.match_disputed`, `tournament.completed`.
+
 ## Architecture
 
 ```
@@ -171,7 +210,7 @@ internal/
     identity/         → auth + profile (v1 implemented)
     score/            → matches + history (/v1/matches/*, /v1/users/{id}/matches)
     social/           → friendships + user search (/v1/friends/*, /v1/users/*)
-    tournament/       → planned: /v1/tournaments/* (stub)
+    tournament/       → brackets/round-robin (/v1/tournaments/*, live via SSE)
   migrate/            → embedded SQL migration runner
 ```
 

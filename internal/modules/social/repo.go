@@ -19,6 +19,14 @@ type UserSummary struct {
 	ProfileIcon *string `json:"profile_icon"`
 }
 
+// UserProfile is returned by GET /v1/users/{userID} for any authenticated
+// viewer. FriendshipStatus is one of: "self" | "accepted" |
+// "pending_sent" | "pending_received" | "none".
+type UserProfile struct {
+	UserSummary
+	FriendshipStatus string `json:"friendship_status"`
+}
+
 // SearchResult is a user search hit annotated with the viewer's
 // friendship status: none | pending_sent | pending_received | accepted.
 type SearchResult struct {
@@ -73,13 +81,14 @@ func (r *repo) searchUsers(ctx context.Context, viewerID, query string, limit, o
 		return nil, 0, fmt.Errorf("count users: %w", err)
 	}
 
+	// Join via unordered-pair unique index instead of an OR bidirectional join.
 	q := `
 		SELECT u.id, u.nickname, u.name, u.surname, u.profile_icon,
 		       f.status, f.requester_id
 		FROM users u
 		LEFT JOIN friendships f
-		  ON (f.requester_id = $1 AND f.addressee_id = u.id)
-		  OR (f.requester_id = u.id AND f.addressee_id = $1)
+		  ON LEAST(f.requester_id, f.addressee_id) = LEAST($1::uuid, u.id)
+		 AND GREATEST(f.requester_id, f.addressee_id) = GREATEST($1::uuid, u.id)
 		WHERE ` + where + `
 		ORDER BY LOWER(COALESCE(u.nickname, u.name, '')) ASC
 		LIMIT $3 OFFSET $4`
@@ -123,11 +132,12 @@ func deriveStatus(status, requesterID *string, viewerID string) string {
 
 // findBetween returns the friendship row between two users in either direction.
 func (r *repo) findBetween(ctx context.Context, a, b string) (Friendship, error) {
+	// Uses uq_friendships_pair (LEAST/GREATEST) instead of an OR scan.
 	const q = `
 		SELECT id, requester_id, addressee_id, status, created_at, updated_at
 		FROM friendships
-		WHERE (requester_id = $1 AND addressee_id = $2)
-		   OR (requester_id = $2 AND addressee_id = $1)`
+		WHERE LEAST(requester_id, addressee_id) = LEAST($1::uuid, $2::uuid)
+		  AND GREATEST(requester_id, addressee_id) = GREATEST($1::uuid, $2::uuid)`
 	var f Friendship
 	err := r.pool.QueryRow(ctx, q, a, b).
 		Scan(&f.ID, &f.RequesterID, &f.AddresseeID, &f.Status, &f.CreatedAt, &f.UpdatedAt)
@@ -191,19 +201,25 @@ func (r *repo) updateStatus(ctx context.Context, id, addresseeID, status string)
 }
 
 // listFriends returns accepted friends of userID with the total count.
+// Uses UNION ALL of two indexed legs instead of OR on requester/addressee.
 func (r *repo) listFriends(ctx context.Context, userID string, limit, offset int) ([]UserSummary, int64, error) {
-	const whereJoin = `
-		FROM friendships f
-		JOIN users u ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END
-		WHERE (f.requester_id = $1 OR f.addressee_id = $1) AND f.status = 'accepted'`
+	const friendIDs = `
+		SELECT addressee_id AS friend_id FROM friendships
+		WHERE requester_id = $1 AND status = 'accepted'
+		UNION ALL
+		SELECT requester_id AS friend_id FROM friendships
+		WHERE addressee_id = $1 AND status = 'accepted'`
 
 	var total int64
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) `+whereJoin, userID).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM (`+friendIDs+`) f`, userID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count friends: %w", err)
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT u.id, u.nickname, u.name, u.surname, u.profile_icon `+whereJoin+`
+		SELECT u.id, u.nickname, u.name, u.surname, u.profile_icon
+		FROM (`+friendIDs+`) f
+		JOIN users u ON u.id = f.friend_id
 		ORDER BY LOWER(COALESCE(u.nickname, u.name, '')) ASC
 		LIMIT $2 OFFSET $3`, userID, limit, offset)
 	if err != nil {
@@ -279,8 +295,8 @@ func (r *repo) areFriends(ctx context.Context, a, b string) (bool, error) {
 		SELECT EXISTS (
 			SELECT 1 FROM friendships
 			WHERE status = 'accepted'
-			  AND ((requester_id = $1 AND addressee_id = $2)
-			    OR (requester_id = $2 AND addressee_id = $1)))`, a, b).Scan(&exists)
+			  AND LEAST(requester_id, addressee_id) = LEAST($1::uuid, $2::uuid)
+			  AND GREATEST(requester_id, addressee_id) = GREATEST($1::uuid, $2::uuid))`, a, b).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("areFriends: %w", err)
 	}

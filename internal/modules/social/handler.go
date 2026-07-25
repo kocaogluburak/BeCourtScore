@@ -14,7 +14,7 @@ import (
 // so tests can substitute a stub without hitting the database.
 type svcFacade interface {
 	SearchUsers(ctx context.Context, viewerID, query string, limit, offset int) ([]SearchResult, int64, error)
-	GetUserProfile(ctx context.Context, viewerID, targetID string) (UserSummary, error)
+	GetUserProfile(ctx context.Context, viewerID, targetID string) (UserProfile, error)
 	SendRequest(ctx context.Context, requesterID, addresseeID string) (Friendship, error)
 	AcceptRequest(ctx context.Context, userID, requestID string) (Friendship, error)
 	RejectRequest(ctx context.Context, userID, requestID string) (Friendship, error)
@@ -57,8 +57,6 @@ func (h *handler) getUserProfile(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrNotFound):
 			httpx.Error(w, http.StatusNotFound, "user not found")
-		case errors.Is(err, ErrForbidden):
-			httpx.Error(w, http.StatusForbidden, "not friends with this user")
 		default:
 			httpx.Error(w, http.StatusInternalServerError, "failed to get profile")
 		}

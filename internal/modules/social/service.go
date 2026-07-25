@@ -31,18 +31,36 @@ func (s *Service) SearchUsers(ctx context.Context, viewerID, query string, limit
 	return s.repo.searchUsers(ctx, viewerID, query, limit, offset)
 }
 
-// GetUserProfile returns a public profile. Allowed for self or accepted friends.
-func (s *Service) GetUserProfile(ctx context.Context, viewerID, targetID string) (UserSummary, error) {
-	if viewerID != targetID {
-		ok, err := s.repo.areFriends(ctx, viewerID, targetID)
-		if err != nil {
-			return UserSummary{}, err
-		}
-		if !ok {
-			return UserSummary{}, ErrForbidden
-		}
+// GetUserProfile returns a public profile for any authenticated user.
+// FriendshipStatus reflects the viewer's relationship with the target.
+func (s *Service) GetUserProfile(ctx context.Context, viewerID, targetID string) (UserProfile, error) {
+	summary, err := s.repo.getUserSummary(ctx, targetID)
+	if err != nil {
+		return UserProfile{}, err
 	}
-	return s.repo.getUserSummary(ctx, targetID)
+
+	if viewerID == targetID {
+		return UserProfile{UserSummary: summary, FriendshipStatus: "self"}, nil
+	}
+
+	status := "none"
+	f, err := s.repo.findBetween(ctx, viewerID, targetID)
+	if err == nil {
+		switch f.Status {
+		case "accepted":
+			status = "accepted"
+		case "pending":
+			if f.RequesterID == viewerID {
+				status = "pending_sent"
+			} else {
+				status = "pending_received"
+			}
+		}
+	} else if err != ErrNotFound {
+		return UserProfile{}, err
+	}
+
+	return UserProfile{UserSummary: summary, FriendshipStatus: status}, nil
 }
 
 // SendRequest creates (or re-opens) a friend request to addresseeID.

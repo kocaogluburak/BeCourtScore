@@ -2,6 +2,21 @@
 
 Go modular monolith. Single binary, PostgreSQL, Google Sign-In (v1), JWT sessions, SSE.
 
+## Focused domain docs (read the one you're touching)
+
+When working inside a single domain, open its nested `CLAUDE.md` first — it has the routes,
+data model, and gotchas for just that area, so you can focus without loading the whole backend.
+
+| Domain | Focused doc |
+|--------|-------------|
+| Auth + profile + SSE mount | `internal/modules/identity/CLAUDE.md` |
+| Matches + history | `internal/modules/score/CLAUDE.md` |
+| Friendships + user search | `internal/modules/social/CLAUDE.md` |
+| Tournaments (brackets/draws) | `internal/modules/tournament/CLAUDE.md` |
+| Shared infra (authkit/sse/httpx/db/config) | `internal/platform/CLAUDE.md` |
+
+This root file stays the source of truth for cross-cutting concerns (deploy, env, CORS, pagination).
+
 Base URLs:
 
 | Environment | URL |

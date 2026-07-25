@@ -14,6 +14,7 @@ import (
 	"courtscore/internal/modules/identity"
 	"courtscore/internal/modules/score"
 	"courtscore/internal/modules/social"
+	"courtscore/internal/modules/tournament"
 	"courtscore/internal/platform/config"
 	"courtscore/internal/platform/db"
 	"courtscore/internal/platform/sse"
@@ -56,10 +57,13 @@ func main() {
 	socialSvc := social.NewService(pool)
 	scoreSvc := score.NewService(pool, socialSvc)
 
+	// Tournament (brackets, round-robin, live bracket events)
+	tournamentSvc := tournament.NewService(pool, hub)
+
 	// HTTP server
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      httpapi.New(cfg, identitySvc, scoreSvc, socialSvc, hub),
+		Handler:      httpapi.New(cfg, identitySvc, scoreSvc, socialSvc, tournamentSvc, hub),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 0, // SSE connections stream indefinitely
 		IdleTimeout:  60 * time.Second,
