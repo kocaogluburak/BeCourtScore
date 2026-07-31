@@ -36,7 +36,7 @@ Generate a JWT secret: `openssl rand -hex 32`
 2. Enable the **People API**.
 3. Create OAuth 2.0 credentials:
    - **Android**: package `com.court.score`, SHA-1 fingerprint
-   - **iOS**: bundle ID `com.merveburak.courtscore`
+   - **iOS**: bundle ID `com.court.score`
    - **Web** (for testing via curl/Postman)
 4. Add all client IDs to `GOOGLE_CLIENT_IDS`.
 
@@ -282,15 +282,18 @@ Client                                    Backend
 
 ### Google client ID'leri
 
-`GOOGLE_CLIENT_IDS` değişkeni üç ID'yi virgülle içerir — BE her ikisini de geçerli audience olarak kabul eder:
+`GOOGLE_CLIENT_IDS` değişkeni tüm OAuth client ID'lerini virgülle içerir — BE her birini geçerli audience olarak kabul eder:
 
 | Client | ID | Kullanım |
 |---|---|---|
 | Android debug | `620640306728-mlgnptjcl2qsoh6seha3p100r73pruol` | Debug build + emülatör |
 | Android release | `620640306728-et295k0iid88m0u6o6sk91fjivvkukrj` | Play Store build |
-| Web / BE | `620640306728-k6rggqmdjlkh7bb241hjpbd753q6fdeo` | `serverClientId` — clientların kullandığı |
+| Web / BE | `620640306728-k6rggqmdjlkh7bb241hjpbd753q6fdeo` | Mobile `serverClientId` + **WebCourtScore** GIS login |
+| iOS | `620640306728-trqa72aadfsu7taj5lujlfodpv5l5s8k` | App Store / Simulator (`com.court.score`) |
 
 Android ve iOS clientlarda `serverClientId` olarak **Web client ID** kullanılır; bu, Google'ın token audience'ını belirler ve BE tarafında doğrulanan değerdir.
+
+WebCourtScore (`../WebCourtScore`) uses the same Web client ID with Google Identity Services. Add Authorized JavaScript origins for `http://localhost:5173`, `https://court-score.com`, and `https://www.court-score.com` in Google Cloud. For browser calls, set API `CORS_ORIGINS` to those origins (see `.env.example`). Deployed via Cloudflare Workers on `court-score.com` (`npm run deploy` in WebCourtScore).
 
 ### SSE akışı
 

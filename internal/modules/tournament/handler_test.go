@@ -292,6 +292,31 @@ func TestListMine_Returns200WithSearchQuery(t *testing.T) {
 	}
 }
 
+func TestListMine_Returns200WithEmptyList(t *testing.T) {
+	svc := &stubService{tournaments: nil, total: 0}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.listMine(w, authedRequest(http.MethodGet, "/v1/tournaments/mine", nil, "u1"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var page struct {
+		Items []Tournament `json:"items"`
+		Total int64        `json:"total"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if page.Items == nil {
+		t.Fatal("items: want [] not null")
+	}
+	if len(page.Items) != 0 || page.Total != 0 {
+		t.Fatalf("empty page: items=%d total=%d", len(page.Items), page.Total)
+	}
+}
+
 // ── lock / draw ──────────────────────────────────────────────────────────────
 
 func TestLock_Returns403WhenNotOrganizer(t *testing.T) {

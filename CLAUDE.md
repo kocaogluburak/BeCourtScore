@@ -113,7 +113,7 @@ SSE pushes: `friend.request_received` (to addressee), `friend.request_accepted` 
 
 Any new list endpoint MUST use this helper and envelope — never return unbounded arrays.
 
-Mobile clients usually have no browser Origin; CORS mainly matters for web. `CORS_ORIGINS=*` is fine for API-only mobile; tighten for browser frontends later.
+Mobile clients usually have no browser Origin; CORS mainly matters for web. `CORS_ORIGINS=*` is fine for API-only mobile. For WebCourtScore, prefer `CORS_ORIGINS=https://court-score.com,https://www.court-score.com,http://localhost:5173` in prod.
 
 ---
 

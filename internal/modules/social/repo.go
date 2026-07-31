@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,8 +30,10 @@ type UserProfile struct {
 
 // SearchResult is a user search hit annotated with the viewer's
 // friendship status: none | pending_sent | pending_received | accepted.
+// EmailMasked is a privacy-preserving hint so same-name users can be told apart.
 type SearchResult struct {
 	UserSummary
+	EmailMasked      string `json:"email_masked,omitempty"`
 	FriendshipStatus string `json:"friendship_status"`
 }
 
@@ -68,22 +71,30 @@ func (r *repo) getUserSummary(ctx context.Context, id string) (UserSummary, erro
 	return u, nil
 }
 
-// searchUsers matches nickname/name prefixes (case-insensitive) or exact
-// email, excluding the viewer, annotated with friendship status.
+// searchUsers matches nickname/name prefixes (case-insensitive), or exact
+// email when the query contains '@'. Results include a masked email.
 func (r *repo) searchUsers(ctx context.Context, viewerID, query string, limit, offset int) ([]SearchResult, int64, error) {
-	where := `u.id <> $1 AND (LOWER(u.nickname) LIKE LOWER($2) || '%'
-	          OR LOWER(u.name) LIKE LOWER($2) || '%'
-	          OR LOWER(u.email) = LOWER($2))`
+	query = strings.TrimSpace(query)
+	var where string
+	var pattern string
+	if looksLikeEmail(query) {
+		where = `u.id <> $1 AND LOWER(u.email) = LOWER($2)`
+		pattern = query
+	} else {
+		where = `u.id <> $1 AND (LOWER(COALESCE(u.nickname, '')) LIKE LOWER($2) || '%' ESCAPE '\'
+		          OR LOWER(COALESCE(u.name, '')) LIKE LOWER($2) || '%' ESCAPE '\')`
+		pattern = escapeLike(query)
+	}
 
 	var total int64
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM users u WHERE `+where, viewerID, query).Scan(&total); err != nil {
+		`SELECT COUNT(*) FROM users u WHERE `+where, viewerID, pattern).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count users: %w", err)
 	}
 
 	// Join via unordered-pair unique index instead of an OR bidirectional join.
 	q := `
-		SELECT u.id, u.nickname, u.name, u.surname, u.profile_icon,
+		SELECT u.id, u.nickname, u.name, u.surname, u.profile_icon, u.email,
 		       f.status, f.requester_id
 		FROM users u
 		LEFT JOIN friendships f
@@ -93,7 +104,7 @@ func (r *repo) searchUsers(ctx context.Context, viewerID, query string, limit, o
 		ORDER BY LOWER(COALESCE(u.nickname, u.name, '')) ASC
 		LIMIT $3 OFFSET $4`
 
-	rows, err := r.pool.Query(ctx, q, viewerID, query, limit, offset)
+	rows, err := r.pool.Query(ctx, q, viewerID, pattern, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("search users: %w", err)
 	}
@@ -102,11 +113,13 @@ func (r *repo) searchUsers(ctx context.Context, viewerID, query string, limit, o
 	results := []SearchResult{}
 	for rows.Next() {
 		var res SearchResult
+		var email string
 		var status, requesterID *string
-		if err := rows.Scan(&res.ID, &res.Nickname, &res.Name, &res.Surname, &res.ProfileIcon,
+		if err := rows.Scan(&res.ID, &res.Nickname, &res.Name, &res.Surname, &res.ProfileIcon, &email,
 			&status, &requesterID); err != nil {
 			return nil, 0, fmt.Errorf("scan search result: %w", err)
 		}
+		res.EmailMasked = maskEmail(email)
 		res.FriendshipStatus = deriveStatus(status, requesterID, viewerID)
 		results = append(results, res)
 	}
@@ -201,12 +214,12 @@ func (r *repo) updateStatus(ctx context.Context, id, addresseeID, status string)
 }
 
 // listFriends returns accepted friends of userID with the total count.
-// Uses UNION ALL of two indexed legs instead of OR on requester/addressee.
+// Uses UNION (not ALL) so bidirectional accepted rows cannot duplicate a friend.
 func (r *repo) listFriends(ctx context.Context, userID string, limit, offset int) ([]UserSummary, int64, error) {
 	const friendIDs = `
 		SELECT addressee_id AS friend_id FROM friendships
 		WHERE requester_id = $1 AND status = 'accepted'
-		UNION ALL
+		UNION
 		SELECT requester_id AS friend_id FROM friendships
 		WHERE addressee_id = $1 AND status = 'accepted'`
 
