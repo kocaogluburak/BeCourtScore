@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -145,6 +146,9 @@ func (r *repo) updateUser(ctx context.Context, id string, in UpdateInput) (User,
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
+	if isUniqueViolation(err) {
+		return User{}, fmt.Errorf("%w: nickname already taken", ErrConflict)
+	}
 	if err != nil {
 		return User{}, fmt.Errorf("updateUser: %w", err)
 	}
@@ -193,8 +197,14 @@ func (r *repo) revokeRefreshToken(ctx context.Context, hash string) error {
 	return err
 }
 
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
 // Sentinel errors.
 var (
 	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
 	ErrInvalidToken = errors.New("invalid or expired refresh token")
 )

@@ -233,6 +233,19 @@ func TestPatchMe_Returns404WhenUserNotFound(t *testing.T) {
 	}
 }
 
+func TestPatchMe_Returns409WhenNicknameTaken(t *testing.T) {
+	svc := &stubService{user: baseUser(), updateErr: ErrConflict}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	body, _ := json.Marshal(map[string]string{"nickname": "Burkinefasso"})
+	w := httptest.NewRecorder()
+	h.patchMe(w, authedRequest(http.MethodPatch, "/v1/me", body, "user-abc"))
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status: got %d, want 409", w.Code)
+	}
+}
+
 func TestPatchMe_Returns500OnUnexpectedError(t *testing.T) {
 	svc := &stubService{user: baseUser(), updateErr: ErrInvalidToken}
 	h := &handler{svc: svc, hub: sse.NewHub()}

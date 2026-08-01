@@ -10,7 +10,9 @@ func escapeLike(s string) string {
 	return s
 }
 
-// maskEmail returns a privacy-preserving form like "b***@gmail.com".
+// maskEmail returns a privacy-preserving form like "b***u@gmail.com".
+// First and last local-part characters are kept so two accounts on the same
+// domain (e.g. burak.kocaolu vs burak.business.ai) stay distinguishable in search.
 func maskEmail(email string) string {
 	email = strings.TrimSpace(email)
 	at := strings.LastIndex(email, "@")
@@ -26,7 +28,7 @@ func maskEmail(email string) string {
 	if len(runes) == 1 {
 		return string(runes[0]) + "***" + domain
 	}
-	return string(runes[0]) + "***" + domain
+	return string(runes[0]) + "***" + string(runes[len(runes)-1]) + domain
 }
 
 func looksLikeEmail(q string) bool {

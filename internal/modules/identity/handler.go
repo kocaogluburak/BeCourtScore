@@ -144,6 +144,10 @@ func (h *handler) patchMe(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusNotFound, "user not found")
 			return
 		}
+		if errors.Is(err, ErrConflict) {
+			httpx.Error(w, http.StatusConflict, "nickname already taken")
+			return
+		}
 		httpx.Error(w, http.StatusInternalServerError, "update failed")
 		return
 	}
