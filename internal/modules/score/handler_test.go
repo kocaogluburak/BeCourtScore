@@ -17,12 +17,14 @@ import (
 
 type stubService struct {
 	match     Match
+	live      LiveMatch
 	matches   []Match
 	total     int64
 	createErr error
 	listErr   error
 	getErr    error
 	deleteErr error
+	liveErr   error
 
 	gotLimit  int
 	gotOffset int
@@ -53,6 +55,29 @@ func (s *stubService) GetMatch(_ context.Context, _, _ string) (Match, error) {
 }
 
 func (s *stubService) DeleteMatch(_ context.Context, _, _ string) error { return s.deleteErr }
+
+func (s *stubService) StartLiveMatch(_ context.Context, userID string, in LiveStartInput) (LiveMatch, error) {
+	if s.liveErr != nil {
+		return LiveMatch{}, s.liveErr
+	}
+	m := s.live
+	m.CreatedBy = userID
+	m.Sport = in.Sport
+	m.Status = "IN_PROGRESS"
+	return m, nil
+}
+
+func (s *stubService) GetLiveMatch(_ context.Context, _, _ string) (LiveMatch, error) {
+	return s.live, s.liveErr
+}
+
+func (s *stubService) UpdateLiveMatch(_ context.Context, _, _ string, _ LiveScoreUpdate) (LiveMatch, error) {
+	return s.live, s.liveErr
+}
+
+func (s *stubService) EndLiveMatch(_ context.Context, _, _ string, _ LiveEndInput) (LiveMatch, error) {
+	return s.live, s.liveErr
+}
 
 func authedRequest(method, target string, body []byte, userID string) *http.Request {
 	var r *http.Request

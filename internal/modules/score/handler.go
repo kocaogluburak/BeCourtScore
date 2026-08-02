@@ -18,6 +18,10 @@ type svcFacade interface {
 	ListUserMatches(ctx context.Context, viewerID, targetID string, f ListFilter, limit, offset int) ([]Match, int64, error)
 	GetMatch(ctx context.Context, viewerID, matchID string) (Match, error)
 	DeleteMatch(ctx context.Context, userID, matchID string) error
+	StartLiveMatch(ctx context.Context, userID string, in LiveStartInput) (LiveMatch, error)
+	GetLiveMatch(ctx context.Context, viewerID, id string) (LiveMatch, error)
+	UpdateLiveMatch(ctx context.Context, userID, id string, u LiveScoreUpdate) (LiveMatch, error)
+	EndLiveMatch(ctx context.Context, userID, id string, in LiveEndInput) (LiveMatch, error)
 }
 
 type handler struct {

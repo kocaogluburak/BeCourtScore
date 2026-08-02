@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"courtscore/internal/modules/identity"
+	"courtscore/internal/modules/notify"
 	"courtscore/internal/modules/score"
 	"courtscore/internal/modules/social"
 	"courtscore/internal/modules/tournament"
@@ -17,7 +18,15 @@ import (
 )
 
 // New builds and returns the root HTTP handler with all routes mounted.
-func New(cfg config.Config, identitySvc *identity.Service, scoreSvc *score.Service, socialSvc *social.Service, tournamentSvc *tournament.Service, hub *sse.Hub) http.Handler {
+func New(
+	cfg config.Config,
+	identitySvc *identity.Service,
+	scoreSvc *score.Service,
+	socialSvc *social.Service,
+	tournamentSvc *tournament.Service,
+	notifySvc *notify.Service,
+	hub *sse.Hub,
+) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RealIP)
@@ -37,6 +46,7 @@ func New(cfg config.Config, identitySvc *identity.Service, scoreSvc *score.Servi
 	score.Mount(r, scoreSvc, authMW)
 	social.Mount(r, socialSvc, hub, authMW)
 	tournament.Mount(r, tournamentSvc, authMW)
+	notify.Mount(r, notifySvc, authMW)
 
 	return r
 }
