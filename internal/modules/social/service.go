@@ -23,7 +23,7 @@ func (s *Service) AreFriends(ctx context.Context, a, b string) (bool, error) {
 	return s.repo.areFriends(ctx, a, b)
 }
 
-// SearchUsers finds users by nickname/name prefix or exact email.
+// SearchUsers finds users by nickname/name/surname prefix or exact email.
 func (s *Service) SearchUsers(ctx context.Context, viewerID, query string, limit, offset int) ([]SearchResult, int64, error) {
 	if len(query) < 2 {
 		return nil, 0, fmt.Errorf("%w: query must be at least 2 characters", ErrInvalid)

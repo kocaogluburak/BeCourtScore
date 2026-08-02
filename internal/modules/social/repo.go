@@ -71,8 +71,9 @@ func (r *repo) getUserSummary(ctx context.Context, id string) (UserSummary, erro
 	return u, nil
 }
 
-// searchUsers matches nickname/name prefixes (case-insensitive), or exact
-// email when the query contains '@'. Results include a masked email.
+// searchUsers matches nickname/name/surname prefixes (case-insensitive),
+// "name surname" full-name prefix, or exact email when the query contains '@'.
+// Results include a masked email.
 func (r *repo) searchUsers(ctx context.Context, viewerID, query string, limit, offset int) ([]SearchResult, int64, error) {
 	query = strings.TrimSpace(query)
 	var where string
@@ -81,8 +82,13 @@ func (r *repo) searchUsers(ctx context.Context, viewerID, query string, limit, o
 		where = `u.id <> $1 AND LOWER(u.email) = LOWER($2)`
 		pattern = query
 	} else {
-		where = `u.id <> $1 AND (LOWER(COALESCE(u.nickname, '')) LIKE LOWER($2) || '%' ESCAPE '\'
-		          OR LOWER(COALESCE(u.name, '')) LIKE LOWER($2) || '%' ESCAPE '\')`
+		where = `u.id <> $1 AND (
+		          LOWER(COALESCE(u.nickname, '')) LIKE LOWER($2) || '%' ESCAPE '\'
+		          OR LOWER(COALESCE(u.name, '')) LIKE LOWER($2) || '%' ESCAPE '\'
+		          OR LOWER(COALESCE(u.surname, '')) LIKE LOWER($2) || '%' ESCAPE '\'
+		          OR LOWER(TRIM(BOTH FROM COALESCE(u.name, '') || ' ' || COALESCE(u.surname, '')))
+		             LIKE LOWER($2) || '%' ESCAPE '\'
+		        )`
 		pattern = escapeLike(query)
 	}
 

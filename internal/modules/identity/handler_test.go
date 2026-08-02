@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,18 +18,29 @@ import (
 // ── stub service ─────────────────────────────────────────────────────────────
 
 type stubService struct {
-	user      User
+	user       User
 	getUserErr error
 	updateErr  error
+	session    Session
+	isNewUser  bool
+	authErr    error
+	refreshErr error
+	revokeErr  error
 }
 
 func (s *stubService) AuthWithProvider(_ context.Context, _, _ string) (Session, User, bool, error) {
-	return Session{}, User{}, false, nil
+	if s.authErr != nil {
+		return Session{}, User{}, false, s.authErr
+	}
+	return s.session, s.user, s.isNewUser, nil
 }
 func (s *stubService) RefreshSession(_ context.Context, _ string) (Session, User, error) {
-	return Session{}, User{}, nil
+	if s.refreshErr != nil {
+		return Session{}, User{}, s.refreshErr
+	}
+	return s.session, s.user, nil
 }
-func (s *stubService) RevokeSession(_ context.Context, _ string) error { return nil }
+func (s *stubService) RevokeSession(_ context.Context, _ string) error { return s.revokeErr }
 
 func (s *stubService) GetUser(_ context.Context, _ string) (User, error) {
 	return s.user, s.getUserErr
@@ -256,6 +268,120 @@ func TestPatchMe_Returns500OnUnexpectedError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status: got %d, want 500", w.Code)
+	}
+}
+
+// ── Auth handlers (ID-BE-01) ──────────────────────────────────────────────────
+
+func TestAuthWithProvider_Returns200(t *testing.T) {
+	svc := &stubService{
+		user:      baseUser(),
+		isNewUser: true,
+		session: Session{
+			AccessToken:  "access",
+			RefreshToken: "refresh",
+			ExpiresIn:    3600,
+		},
+	}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	body, _ := json.Marshal(map[string]string{"id_token": "google-id"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/google", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("provider", "google")
+
+	w := httptest.NewRecorder()
+	h.authWithProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["access_token"] != "access" {
+		t.Errorf("access_token: %v", got["access_token"])
+	}
+	if got["is_new_user"] != true {
+		t.Errorf("is_new_user: %v", got["is_new_user"])
+	}
+}
+
+func TestAuthWithProvider_MissingToken(t *testing.T) {
+	h := &handler{svc: &stubService{}, hub: sse.NewHub()}
+	body, _ := json.Marshal(map[string]string{})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/google", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("provider", "google")
+
+	w := httptest.NewRecorder()
+	h.authWithProvider(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
+	}
+}
+
+func TestAuthWithProvider_Unauthorized(t *testing.T) {
+	svc := &stubService{authErr: errors.New("verify failed")}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+	body, _ := json.Marshal(map[string]string{"id_token": "bad"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/google", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("provider", "google")
+
+	w := httptest.NewRecorder()
+	h.authWithProvider(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401", w.Code)
+	}
+}
+
+func TestRefresh_Returns200(t *testing.T) {
+	svc := &stubService{
+		user: baseUser(),
+		session: Session{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+		},
+	}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+	body, _ := json.Marshal(map[string]string{"refresh_token": "old-refresh"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	h.refresh(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+}
+
+func TestRefresh_InvalidToken(t *testing.T) {
+	svc := &stubService{refreshErr: ErrInvalidToken}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+	body, _ := json.Marshal(map[string]string{"refresh_token": "expired"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/refresh", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	h.refresh(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401", w.Code)
+	}
+}
+
+func TestLogout_Returns204(t *testing.T) {
+	h := &handler{svc: &stubService{}, hub: sse.NewHub()}
+	body, _ := json.Marshal(map[string]string{"refresh_token": "tok"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	h.logout(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204", w.Code)
 	}
 }
 

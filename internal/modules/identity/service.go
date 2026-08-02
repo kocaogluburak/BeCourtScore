@@ -23,9 +23,21 @@ type ServiceConfig struct {
 	RefreshTokenTTL time.Duration
 }
 
+// userStore is the persistence surface used by Service.
+// The concrete *repo implements it; tests substitute an in-memory fake.
+type userStore interface {
+	findUserByIdentity(ctx context.Context, provider, subject string) (User, bool, error)
+	createUserWithIdentity(ctx context.Context, ext ExternalIdentity) (User, error)
+	getUserByID(ctx context.Context, id string) (User, error)
+	updateUser(ctx context.Context, id string, in UpdateInput) (User, error)
+	saveRefreshToken(ctx context.Context, userID, hash string, expiresAt time.Time) error
+	consumeRefreshToken(ctx context.Context, hash string) (string, error)
+	revokeRefreshToken(ctx context.Context, hash string) error
+}
+
 // Service is the identity domain's business logic layer.
 type Service struct {
-	repo      *repo
+	repo      userStore
 	providers map[string]IdentityProvider
 	cfg       ServiceConfig
 }
@@ -70,7 +82,7 @@ func (s *Service) AuthWithProvider(ctx context.Context, providerName, credential
 			return Session{}, User{}, false, err
 		}
 	} else {
-		// Backfill name/surname from provider if the user hasn't set them yet.
+		// Backfill name/surname/picture from provider if the user hasn't set them yet.
 		var backfill UpdateInput
 		if user.Name == nil && ext.GivenName != "" {
 			v := ext.GivenName
@@ -80,7 +92,11 @@ func (s *Service) AuthWithProvider(ctx context.Context, providerName, credential
 			v := ext.FamilyName
 			backfill.Surname = &v
 		}
-		if backfill.Name != nil || backfill.Surname != nil {
+		if (user.ProfileIcon == nil || *user.ProfileIcon == "") && ext.Picture != "" {
+			v := ext.Picture
+			backfill.ProfileIcon = &v
+		}
+		if backfill.Name != nil || backfill.Surname != nil || backfill.ProfileIcon != nil {
 			if updated, updErr := s.repo.updateUser(ctx, user.ID, backfill); updErr == nil {
 				user = updated
 			}
