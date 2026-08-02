@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS live_matches (
     points_to_win     INT         NOT NULL DEFAULT 11 CHECK (points_to_win >= 1),
     winner_side       CHAR(1)     CHECK (winner_side IN ('A', 'B')),
     created_by        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    history_match_id  UUID        REFERENCES matches(id) ON DELETE SET NULL,
+    -- Soft link only: `matches` is partitioned with PK (id, played_at), so a
+    -- FK on matches(id) alone is invalid (SQLSTATE 42830).
+    history_match_id  UUID,
     started_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ended_at          TIMESTAMPTZ,
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
