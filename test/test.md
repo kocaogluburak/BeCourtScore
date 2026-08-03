@@ -27,6 +27,7 @@ make test
 | `internal/modules/score/handler_test.go` | match CRUD + friendship gate |
 | `internal/modules/score/live_handler_test.go` | live match start/get/update/end |
 | `internal/modules/notify/handler_test.go` | device register + noop FCM |
+| `internal/modules/notify/fcm_test.go` | NewFCMSenderFromEnv → Noop when unset/bad path/invalid JSON |
 | `internal/modules/identity/handler_test.go` | me/patch + auth/refresh/logout |
 | `internal/modules/identity/service_test.go` | AuthWithProvider / Refresh / Revoke |
 | `internal/modules/identity/google_test.go` | Google claims + unknown provider |
