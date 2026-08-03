@@ -323,3 +323,18 @@ docker compose up        # Postgres + API
 docker compose up -d     # background
 docker compose down
 ```
+
+### Push (FCM)
+
+Compose mounts `secrets/firebase-adminsdk.json` into the API container. Without that file, push falls back to `NoopSender` (`notify: noop push` in logs).
+
+```bash
+# 1) Place Firebase Admin SDK JSON (see secrets/README.md)
+cp /path/to/court-score-firebase-adminsdk-*.json secrets/firebase-adminsdk.json
+
+# 2) Recreate API
+docker compose up -d --build --force-recreate api
+
+# 3) Confirm FCM is live (not NoopSender)
+docker compose logs api | grep -E 'FCM sender ready|NoopSender'
+```

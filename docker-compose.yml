@@ -38,8 +38,15 @@ services:
     environment:
       PORT: "8080"
       DATABASE_URL: postgres://courtscore:courtscore@postgres:5432/courtscore?sslmode=disable
+      # Host paths in .env (e.g. /Users/...) are invalid inside the container.
+      # Mount the service-account JSON and point ADC at the in-container path.
+      # Prefer FIREBASE_CREDENTIALS_JSON in .env if you skip the mount.
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase.json
     env_file:
       - .env
+    volumes:
+      # Copy Firebase Admin SDK JSON here before deploy (see secrets/README.md).
+      - ${FIREBASE_CREDENTIALS_FILE:-./secrets/firebase-adminsdk.json}:/run/secrets/firebase.json:ro
     deploy:
       resources:
         limits:

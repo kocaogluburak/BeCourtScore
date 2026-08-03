@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,13 +40,18 @@ type FCMSender struct {
 
 // NewFCMSenderFromEnv builds an FCM sender from FIREBASE_CREDENTIALS_JSON
 // or GOOGLE_APPLICATION_CREDENTIALS. Returns NoopSender when unset.
+//
+// Docker: mount the service-account JSON at GOOGLE_APPLICATION_CREDENTIALS
+// (compose defaults to /run/secrets/firebase.json) or set FIREBASE_CREDENTIALS_JSON.
+// A host-only path like /Users/... inside a container falls back to NoopSender.
 func NewFCMSenderFromEnv() Sender {
-	raw := os.Getenv("FIREBASE_CREDENTIALS_JSON")
+	raw := strings.TrimSpace(os.Getenv("FIREBASE_CREDENTIALS_JSON"))
 	if raw == "" {
-		if path := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); path != "" {
+		if path := strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")); path != "" {
 			b, err := os.ReadFile(path)
 			if err != nil {
-				slog.Warn("notify: cannot read GOOGLE_APPLICATION_CREDENTIALS", "err", err)
+				slog.Warn("notify: cannot read GOOGLE_APPLICATION_CREDENTIALS — using NoopSender",
+					"path", path, "err", err)
 				return NoopSender{}
 			}
 			raw = string(b)
@@ -60,6 +66,7 @@ func NewFCMSenderFromEnv() Sender {
 		slog.Warn("notify: FCM init failed — using NoopSender", "err", err)
 		return NoopSender{}
 	}
+	slog.Info("notify: FCM sender ready", "project_id", s.projectID)
 	return s
 }
 
