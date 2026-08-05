@@ -23,8 +23,10 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 		r.Get("/v1/users/{userID}/matches", h.listUserMatches)
 
 		r.Post("/v1/live-matches", h.startLiveMatch)
+		r.Get("/v1/live-matches", h.listMyOpenLiveMatches)
 		r.Get("/v1/live-matches/{id}", h.getLiveMatch)
 		r.Patch("/v1/live-matches/{id}", h.updateLiveMatch)
 		r.Post("/v1/live-matches/{id}/end", h.endLiveMatch)
+		r.Post("/v1/live-matches/{id}/cancel", h.cancelLiveMatch)
 	})
 }

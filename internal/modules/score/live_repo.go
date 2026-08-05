@@ -175,5 +175,55 @@ func (r *repo) endLive(ctx context.Context, id string, in LiveEndInput, historyI
 	return m, err
 }
 
+func (r *repo) cancelLive(ctx context.Context, id string) (LiveMatch, error) {
+	const q = `
+		UPDATE live_matches SET
+			status = 'ENDED', ended_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'IN_PROGRESS'
+		RETURNING ` + liveCols
+	m, err := scanLive(r.pool.QueryRow(ctx, q, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing, gerr := r.getLiveByID(ctx, id)
+		if gerr != nil {
+			return LiveMatch{}, gerr
+		}
+		if existing.Status == "ENDED" {
+			return LiveMatch{}, ErrWrongState
+		}
+		return LiveMatch{}, ErrNotFound
+	}
+	return m, err
+}
+
+func (r *repo) listOpenLiveByCreator(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error) {
+	var total int64
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM live_matches WHERE created_by = $1 AND status = 'IN_PROGRESS'`,
+		userID,
+	).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+liveCols+` FROM live_matches
+		 WHERE created_by = $1 AND status = 'IN_PROGRESS'
+		 ORDER BY started_at DESC
+		 LIMIT $2 OFFSET $3`,
+		userID, limit, offset,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []LiveMatch
+	for rows.Next() {
+		m, err := scanLive(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, m)
+	}
+	return out, total, rows.Err()
+}
+
 // ErrWrongState is returned when a live match is not in the expected status.
 var ErrWrongState = errors.New("wrong state")

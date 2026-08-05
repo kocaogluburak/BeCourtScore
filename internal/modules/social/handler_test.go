@@ -28,6 +28,7 @@ type stubService struct {
 	sendErr     error
 	acceptErr   error
 	rejectErr   error
+	listErr     error
 	unfriendErr error
 }
 
@@ -55,10 +56,16 @@ func (s *stubService) RejectRequest(_ context.Context, _, _ string) (Friendship,
 }
 
 func (s *stubService) ListFriends(_ context.Context, _ string, _, _ int) ([]UserSummary, int64, error) {
+	if s.listErr != nil {
+		return nil, 0, s.listErr
+	}
 	return s.friends, s.total, nil
 }
 
 func (s *stubService) ListIncomingRequests(_ context.Context, _ string, _, _ int) ([]IncomingRequest, int64, error) {
+	if s.listErr != nil {
+		return nil, 0, s.listErr
+	}
 	return s.requests, s.total, nil
 }
 
@@ -258,6 +265,101 @@ func TestAcceptRequest_Returns404WhenNotAddresseeOrMissing(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	h.acceptRequest(w, authedRequest(http.MethodPost, "/v1/friends/requests/f1/accept", nil, "u3"))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", w.Code)
+	}
+}
+
+// ── GET /v1/friends ──────────────────────────────────────────────────────────
+
+func TestListFriends_Returns200Paged(t *testing.T) {
+	svc := &stubService{
+		friends: []UserSummary{{ID: "u2", Nickname: ptr("bob")}},
+		total:   1,
+	}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.listFriends(w, authedRequest(http.MethodGet, "/v1/friends?page=1&page_size=20", nil, "u1"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got httpx.Page[UserSummary]
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].ID != "u2" || got.Total != 1 {
+		t.Errorf("page: %+v", got)
+	}
+}
+
+func TestListFriends_Returns500OnError(t *testing.T) {
+	h := &handler{svc: &stubService{listErr: ErrNotFound}, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.listFriends(w, authedRequest(http.MethodGet, "/v1/friends", nil, "u1"))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want 500", w.Code)
+	}
+}
+
+// ── GET /v1/friends/requests ─────────────────────────────────────────────────
+
+func TestListRequests_Returns200Paged(t *testing.T) {
+	svc := &stubService{
+		requests: []IncomingRequest{{
+			ID:        "f1",
+			Requester: UserSummary{ID: "u2", Nickname: ptr("bob")},
+		}},
+		total: 1,
+	}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.listRequests(w, authedRequest(http.MethodGet, "/v1/friends/requests", nil, "u1"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got httpx.Page[IncomingRequest]
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].ID != "f1" {
+		t.Errorf("page: %+v", got)
+	}
+}
+
+// ── POST /v1/friends/requests/{id}/reject ────────────────────────────────────
+
+func TestRejectRequest_Returns200(t *testing.T) {
+	svc := &stubService{friendship: Friendship{ID: "f1", RequesterID: "u1", AddresseeID: "u2", Status: "rejected"}}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.rejectRequest(w, authedRequest(http.MethodPost, "/v1/friends/requests/f1/reject", nil, "u2"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got Friendship
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Status != "rejected" {
+		t.Errorf("status: got %q, want rejected", got.Status)
+	}
+}
+
+func TestRejectRequest_Returns404WhenMissing(t *testing.T) {
+	svc := &stubService{rejectErr: ErrNotFound}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.rejectRequest(w, authedRequest(http.MethodPost, "/v1/friends/requests/f1/reject", nil, "u2"))
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404", w.Code)

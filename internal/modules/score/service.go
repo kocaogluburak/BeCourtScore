@@ -24,9 +24,24 @@ type PushSender interface {
 	SendToUser(ctx context.Context, userID, title, body string, data map[string]string) error
 }
 
+// store is the persistence surface used by Service.
+// The concrete *repo implements it; tests substitute an in-memory fake.
+type store interface {
+	insert(ctx context.Context, createdBy string, in CreateInput) (Match, error)
+	listForUser(ctx context.Context, userID string, f ListFilter, limit, offset int) ([]Match, int64, error)
+	getByID(ctx context.Context, id string) (Match, error)
+	deleteByID(ctx context.Context, id, createdBy string) error
+	insertLive(ctx context.Context, createdBy string, in LiveStartInput) (LiveMatch, error)
+	getLiveByID(ctx context.Context, id string) (LiveMatch, error)
+	updateLiveScore(ctx context.Context, id string, u LiveScoreUpdate) (LiveMatch, error)
+	endLive(ctx context.Context, id string, in LiveEndInput, historyID *string) (LiveMatch, error)
+	cancelLive(ctx context.Context, id string) (LiveMatch, error)
+	listOpenLiveByCreator(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error)
+}
+
 // Service is the score domain's business logic layer.
 type Service struct {
-	repo    *repo
+	repo    store
 	friends FriendChecker
 	hub     *sse.Hub
 	push    PushSender
@@ -202,6 +217,32 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 	}
 	s.publishLive("match.ended", ended)
 	return ended, nil
+}
+
+// ListMyOpenLiveMatches returns in-progress sessions created by the user.
+func (s *Service) ListMyOpenLiveMatches(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error) {
+	return s.repo.listOpenLiveByCreator(ctx, userID, limit, offset)
+}
+
+// CancelLiveMatch ends an in-progress session without writing match history.
+// Creator only — used to abandon stuck / abandoned scoreboard sessions.
+func (s *Service) CancelLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error) {
+	m, err := s.repo.getLiveByID(ctx, id)
+	if err != nil {
+		return LiveMatch{}, err
+	}
+	if m.CreatedBy != userID {
+		return LiveMatch{}, ErrForbidden
+	}
+	if m.Status != "IN_PROGRESS" {
+		return LiveMatch{}, ErrWrongState
+	}
+	cancelled, err := s.repo.cancelLive(ctx, id)
+	if err != nil {
+		return LiveMatch{}, err
+	}
+	s.publishLive("match.cancelled", cancelled)
+	return cancelled, nil
 }
 
 func (s *Service) requireFriendIfSet(ctx context.Context, userID string, other *string) error {

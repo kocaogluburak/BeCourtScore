@@ -151,3 +151,34 @@ func (h *handler) endLiveMatch(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, m)
 }
+
+func (h *handler) listMyOpenLiveMatches(w http.ResponseWriter, r *http.Request) {
+	userID, _ := authkit.UserIDFromCtx(r.Context())
+	page := httpx.ParsePage(r)
+	items, total, err := h.svc.ListMyOpenLiveMatches(r.Context(), userID, page.PageSize, page.Offset())
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "failed to list live matches")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, httpx.NewPage(items, page, total))
+}
+
+func (h *handler) cancelLiveMatch(w http.ResponseWriter, r *http.Request) {
+	userID, _ := authkit.UserIDFromCtx(r.Context())
+	id := r.PathValue("id")
+	m, err := h.svc.CancelLiveMatch(r.Context(), userID, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "live match not found")
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "forbidden")
+		case errors.Is(err, ErrWrongState):
+			httpx.Error(w, http.StatusConflict, "live match already ended")
+		default:
+			httpx.Error(w, http.StatusInternalServerError, "failed to cancel live match")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, m)
+}

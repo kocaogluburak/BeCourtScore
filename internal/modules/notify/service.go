@@ -13,9 +13,16 @@ var validPlatforms = map[string]bool{
 	"android": true, "ios": true, "web": true,
 }
 
+// store is the persistence surface used by Service.
+type store interface {
+	upsert(ctx context.Context, userID, token, platform string) (DeviceToken, error)
+	delete(ctx context.Context, userID, token string) error
+	tokensForUser(ctx context.Context, userID string) ([]string, error)
+}
+
 // Service manages device tokens and push fan-out.
 type Service struct {
-	repo   *repo
+	repo   store
 	sender Sender
 }
 

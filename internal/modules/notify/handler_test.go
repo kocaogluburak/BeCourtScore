@@ -65,6 +65,42 @@ func TestRegisterDevice_Invalid(t *testing.T) {
 	}
 }
 
+func TestUnregisterDevice_Returns204(t *testing.T) {
+	h := &handler{svc: &stubSvc{}}
+	r := httptest.NewRequest(http.MethodDelete, "/v1/devices/abc%2Fdef", nil)
+	r.SetPathValue("token", "abc/def")
+	r = r.WithContext(context.WithValue(r.Context(), authkit.UserIDKey, "user-1"))
+	w := httptest.NewRecorder()
+	h.unregister(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status=%d", w.Code)
+	}
+}
+
+func TestUnregisterDevice_Returns404(t *testing.T) {
+	h := &handler{svc: &stubSvc{err: ErrNotFound}}
+	r := httptest.NewRequest(http.MethodDelete, "/v1/devices/tok", nil)
+	r.SetPathValue("token", "tok")
+	r = r.WithContext(context.WithValue(r.Context(), authkit.UserIDKey, "user-1"))
+	w := httptest.NewRecorder()
+	h.unregister(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status=%d", w.Code)
+	}
+}
+
+func TestUnregisterDevice_EmptyToken(t *testing.T) {
+	h := &handler{svc: &stubSvc{}}
+	r := httptest.NewRequest(http.MethodDelete, "/v1/devices/", nil)
+	r.SetPathValue("token", "")
+	r = r.WithContext(context.WithValue(r.Context(), authkit.UserIDKey, "user-1"))
+	w := httptest.NewRecorder()
+	h.unregister(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d", w.Code)
+	}
+}
+
 func TestNoopSender_Send(t *testing.T) {
 	if err := (NoopSender{}).Send(context.Background(), []string{"t"}, "hi", "body", map[string]string{"k": "v"}); err != nil {
 		t.Fatal(err)

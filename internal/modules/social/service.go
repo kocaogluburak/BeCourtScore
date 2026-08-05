@@ -7,9 +7,24 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// store is the persistence surface used by Service.
+// The concrete *repo implements it; tests substitute an in-memory fake.
+type store interface {
+	getUserSummary(ctx context.Context, id string) (UserSummary, error)
+	searchUsers(ctx context.Context, viewerID, query string, limit, offset int) ([]SearchResult, int64, error)
+	findBetween(ctx context.Context, a, b string) (Friendship, error)
+	insertRequest(ctx context.Context, requesterID, addresseeID string) (Friendship, error)
+	reopenRequest(ctx context.Context, id, requesterID, addresseeID string) (Friendship, error)
+	updateStatus(ctx context.Context, id, addresseeID, status string) (Friendship, error)
+	listFriends(ctx context.Context, userID string, limit, offset int) ([]UserSummary, int64, error)
+	listIncomingRequests(ctx context.Context, userID string, limit, offset int) ([]IncomingRequest, int64, error)
+	deleteAccepted(ctx context.Context, a, b string) error
+	areFriends(ctx context.Context, a, b string) (bool, error)
+}
+
 // Service is the social domain's business logic layer.
 type Service struct {
-	repo *repo
+	repo store
 }
 
 // NewService creates a Service wired to the given Postgres pool.

@@ -80,6 +80,29 @@ func TestEndLiveMatch_Returns200(t *testing.T) {
 	}
 }
 
+func TestListMyOpenLiveMatches_Returns200(t *testing.T) {
+	svc := &stubService{live: baseLive()}
+	h := &handler{svc: svc}
+	r := authedRequest(http.MethodGet, "/v1/live-matches", nil, "user-abc")
+	w := httptest.NewRecorder()
+	h.listMyOpenLiveMatches(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestCancelLiveMatch_Returns200(t *testing.T) {
+	svc := &stubService{live: baseLive()}
+	h := &handler{svc: svc}
+	r := authedRequest(http.MethodPost, "/v1/live-matches/live-1/cancel", nil, "user-abc")
+	r.SetPathValue("id", "live-1")
+	w := httptest.NewRecorder()
+	h.cancelLiveMatch(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestOpponentUserID(t *testing.T) {
 	opp := "opp"
 	m := LiveMatch{CreatedBy: "me", PlayerBUserID: &opp}

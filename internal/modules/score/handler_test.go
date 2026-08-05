@@ -79,6 +79,26 @@ func (s *stubService) EndLiveMatch(_ context.Context, _, _ string, _ LiveEndInpu
 	return s.live, s.liveErr
 }
 
+func (s *stubService) ListMyOpenLiveMatches(_ context.Context, _ string, limit, offset int) ([]LiveMatch, int64, error) {
+	s.gotLimit, s.gotOffset = limit, offset
+	if s.liveErr != nil {
+		return nil, 0, s.liveErr
+	}
+	if s.live.ID == "" {
+		return nil, 0, nil
+	}
+	return []LiveMatch{s.live}, 1, nil
+}
+
+func (s *stubService) CancelLiveMatch(_ context.Context, _, _ string) (LiveMatch, error) {
+	if s.liveErr != nil {
+		return LiveMatch{}, s.liveErr
+	}
+	m := s.live
+	m.Status = "ENDED"
+	return m, nil
+}
+
 func authedRequest(method, target string, body []byte, userID string) *http.Request {
 	var r *http.Request
 	if body != nil {

@@ -22,6 +22,8 @@ type svcFacade interface {
 	GetLiveMatch(ctx context.Context, viewerID, id string) (LiveMatch, error)
 	UpdateLiveMatch(ctx context.Context, userID, id string, u LiveScoreUpdate) (LiveMatch, error)
 	EndLiveMatch(ctx context.Context, userID, id string, in LiveEndInput) (LiveMatch, error)
+	ListMyOpenLiveMatches(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error)
+	CancelLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error)
 }
 
 type handler struct {
