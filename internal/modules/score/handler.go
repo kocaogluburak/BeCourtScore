@@ -45,6 +45,7 @@ func (h *handler) createMatch(w http.ResponseWriter, r *http.Request) {
 		PlayerBUserID *string    `json:"player_b_user_id"`
 		SetsA         int        `json:"sets_a"`
 		SetsB         int        `json:"sets_b"`
+		SetScores     []SetScore `json:"set_scores"`
 		WinnerSide    string     `json:"winner_side"`
 		PlayedAt      *time.Time `json:"played_at"`
 	}
@@ -61,6 +62,7 @@ func (h *handler) createMatch(w http.ResponseWriter, r *http.Request) {
 		PlayerBUserID: body.PlayerBUserID,
 		SetsA:         body.SetsA,
 		SetsB:         body.SetsB,
+		SetScores:     body.SetScores,
 		WinnerSide:    body.WinnerSide,
 		PlayedAt:      body.PlayedAt,
 	})

@@ -47,12 +47,17 @@ func (f *fakeScoreStore) insert(_ context.Context, createdBy string, in CreateIn
 	if f.insertErr != nil {
 		return Match{}, f.insertErr
 	}
+	scores := in.SetScores
+	if scores == nil {
+		scores = []SetScore{}
+	}
 	m := Match{
 		ID: "hist-1", Sport: in.Sport, PlayerAName: in.PlayerAName, PlayerBName: in.PlayerBName,
 		PlayerAUserID: in.PlayerAUserID, PlayerBUserID: in.PlayerBUserID,
-		SetsA: in.SetsA, SetsB: in.SetsB, WinnerSide: in.WinnerSide, CreatedBy: createdBy,
+		SetsA: in.SetsA, SetsB: in.SetsB, SetScores: scores, WinnerSide: in.WinnerSide, CreatedBy: createdBy,
 		PlayedAt: time.Now(), CreatedAt: time.Now(),
 	}
+	f.match = m
 	f.historyID = m.ID
 	return m, nil
 }
@@ -372,6 +377,37 @@ func TestCreateMatch_Validation(t *testing.T) {
 	svc := newScoreService(&fakeScoreStore{}, &fakeFriends{}, nil)
 	_, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
 		Sport: "CHESS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+	})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCreateMatch_PersistsSetScores(t *testing.T) {
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{}, nil)
+	got, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B",
+		SetsA: 2, SetsB: 1, WinnerSide: "A",
+		SetScores: []SetScore{{A: 6, B: 4}, {A: 3, B: 6}, {A: 7, B: 5}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.SetScores) != 3 || got.SetScores[0].A != 6 || got.SetScores[2].B != 5 {
+		t.Fatalf("set_scores=%+v", got.SetScores)
+	}
+	if len(store.match.SetScores) != 3 {
+		t.Fatalf("store set_scores=%+v", store.match.SetScores)
+	}
+}
+
+func TestCreateMatch_RejectsBadSetScores(t *testing.T) {
+	svc := newScoreService(&fakeScoreStore{}, &fakeFriends{}, nil)
+	_, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B",
+		SetsA: 2, SetsB: 0, WinnerSide: "A",
+		SetScores: []SetScore{{A: -1, B: 4}},
 	})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err=%v", err)

@@ -67,6 +67,7 @@ type LiveEndInput struct {
 	ScoreB     int
 	IsTieBreak bool
 	WinnerSide string
+	SetScores  []SetScore
 }
 
 const liveCols = `id, sport, status, player_a_name, player_b_name, player_a_user_id, player_b_user_id,

@@ -50,6 +50,7 @@ make test
 | LIVE-02 | done | list open + cancel without history |
 | LIVE-03 | done | friend start → PENDING + match.invite; guest → IN_PROGRESS |
 | LIVE-04 | done | accept/decline; list includes opponent; duplicate open → 409 |
+| HIST-01 | done | create match persists set_scores; invalid lines rejected |
 | PUSH-01 | done | register + unregister device token |
 | SOCIAL-01…02 | done | list/accept/reject/unfriend handler + service |
 | ID-BE-01 | done | AuthWithProvider + Refresh + Revoke |

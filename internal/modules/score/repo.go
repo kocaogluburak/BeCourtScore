@@ -2,6 +2,7 @@ package score
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -10,21 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// SetScore is one completed set (tennis/padel games) or game (squash/PP points).
+type SetScore struct {
+	A int `json:"a"`
+	B int `json:"b"`
+}
+
 // Match is a finished match stored in history.
 type Match struct {
-	ID            string    `json:"id"`
-	Sport         string    `json:"sport"`
-	PlayerAName   string    `json:"player_a_name"`
-	PlayerBName   string    `json:"player_b_name"`
-	PlayerAUserID *string   `json:"player_a_user_id"`
-	PlayerBUserID *string   `json:"player_b_user_id"`
-	SetsA         int       `json:"sets_a"`
-	SetsB         int       `json:"sets_b"`
-	WinnerSide    string    `json:"winner_side"`
-	Winner        string    `json:"winner"` // display name derived from winner_side
-	CreatedBy     string    `json:"created_by"`
-	PlayedAt      time.Time `json:"played_at"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            string     `json:"id"`
+	Sport         string     `json:"sport"`
+	PlayerAName   string     `json:"player_a_name"`
+	PlayerBName   string     `json:"player_b_name"`
+	PlayerAUserID *string    `json:"player_a_user_id"`
+	PlayerBUserID *string    `json:"player_b_user_id"`
+	SetsA         int        `json:"sets_a"`
+	SetsB         int        `json:"sets_b"`
+	SetScores     []SetScore `json:"set_scores,omitempty"`
+	WinnerSide    string     `json:"winner_side"`
+	Winner        string     `json:"winner"` // display name derived from winner_side
+	CreatedBy     string     `json:"created_by"`
+	PlayedAt      time.Time  `json:"played_at"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // CreateInput holds the fields required to record a match.
@@ -36,6 +44,7 @@ type CreateInput struct {
 	PlayerBUserID *string
 	SetsA         int
 	SetsB         int
+	SetScores     []SetScore
 	WinnerSide    string
 	PlayedAt      *time.Time
 }
@@ -49,14 +58,21 @@ type ListFilter struct {
 type repo struct{ pool *pgxpool.Pool }
 
 const matchCols = `id, sport, player_a_name, player_b_name, player_a_user_id, player_b_user_id,
-       sets_a, sets_b, winner_side, created_by, played_at, created_at`
+       sets_a, sets_b, set_scores, winner_side, created_by, played_at, created_at`
 
 func scanMatch(row pgx.Row) (Match, error) {
 	var m Match
+	var setScoresRaw []byte
 	err := row.Scan(&m.ID, &m.Sport, &m.PlayerAName, &m.PlayerBName, &m.PlayerAUserID, &m.PlayerBUserID,
-		&m.SetsA, &m.SetsB, &m.WinnerSide, &m.CreatedBy, &m.PlayedAt, &m.CreatedAt)
+		&m.SetsA, &m.SetsB, &setScoresRaw, &m.WinnerSide, &m.CreatedBy, &m.PlayedAt, &m.CreatedAt)
 	if err != nil {
 		return Match{}, err
+	}
+	if len(setScoresRaw) > 0 {
+		_ = json.Unmarshal(setScoresRaw, &m.SetScores)
+	}
+	if m.SetScores == nil {
+		m.SetScores = []SetScore{}
 	}
 	if m.WinnerSide == "A" {
 		m.Winner = m.PlayerAName
@@ -66,21 +82,32 @@ func scanMatch(row pgx.Row) (Match, error) {
 	return m, nil
 }
 
+func marshalSetScores(scores []SetScore) ([]byte, error) {
+	if scores == nil {
+		scores = []SetScore{}
+	}
+	return json.Marshal(scores)
+}
+
 func (r *repo) insert(ctx context.Context, createdBy string, in CreateInput) (Match, error) {
 	playedAt := time.Now()
 	if in.PlayedAt != nil {
 		playedAt = *in.PlayedAt
 	}
+	raw, err := marshalSetScores(in.SetScores)
+	if err != nil {
+		return Match{}, fmt.Errorf("marshal set_scores: %w", err)
+	}
 
 	q := fmt.Sprintf(`
 		INSERT INTO matches (sport, player_a_name, player_b_name, player_a_user_id, player_b_user_id,
-		                     sets_a, sets_b, winner_side, created_by, played_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		                     sets_a, sets_b, set_scores, winner_side, created_by, played_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING %s`, matchCols)
 
 	m, err := scanMatch(r.pool.QueryRow(ctx, q,
 		in.Sport, in.PlayerAName, in.PlayerBName, in.PlayerAUserID, in.PlayerBUserID,
-		in.SetsA, in.SetsB, in.WinnerSide, createdBy, playedAt))
+		in.SetsA, in.SetsB, raw, in.WinnerSide, createdBy, playedAt))
 	if err != nil {
 		return Match{}, fmt.Errorf("insert match: %w", err)
 	}

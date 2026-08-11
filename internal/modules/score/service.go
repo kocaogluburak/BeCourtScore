@@ -68,7 +68,22 @@ func (s *Service) CreateMatch(ctx context.Context, userID string, in CreateInput
 	if in.SetsA < 0 || in.SetsB < 0 {
 		return Match{}, fmt.Errorf("%w: sets must be >= 0", ErrInvalid)
 	}
+	if err := validateSetScores(in.SetScores); err != nil {
+		return Match{}, err
+	}
 	return s.repo.insert(ctx, userID, in)
+}
+
+func validateSetScores(scores []SetScore) error {
+	if len(scores) > 7 {
+		return fmt.Errorf("%w: too many set_scores", ErrInvalid)
+	}
+	for _, s := range scores {
+		if s.A < 0 || s.B < 0 {
+			return fmt.Errorf("%w: set_scores must be >= 0", ErrInvalid)
+		}
+	}
+	return nil
 }
 
 // ListMyMatches returns the caller's match history (participant or recorder).
@@ -218,6 +233,9 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 	if in.WinnerSide != "A" && in.WinnerSide != "B" {
 		return LiveMatch{}, fmt.Errorf("%w: winner_side must be A or B", ErrInvalid)
 	}
+	if err := validateSetScores(in.SetScores); err != nil {
+		return LiveMatch{}, err
+	}
 
 	hist, err := s.repo.insert(ctx, userID, CreateInput{
 		Sport:         m.Sport,
@@ -227,6 +245,7 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 		PlayerBUserID: m.PlayerBUserID,
 		SetsA:         in.SetsA,
 		SetsB:         in.SetsB,
+		SetScores:     in.SetScores,
 		WinnerSide:    in.WinnerSide,
 	})
 	if err != nil {
