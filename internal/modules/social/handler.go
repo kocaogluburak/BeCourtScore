@@ -3,12 +3,20 @@ package social
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"courtscore/internal/platform/authkit"
 	"courtscore/internal/platform/httpx"
 	"courtscore/internal/platform/sse"
 )
+
+// PushSender delivers OS push notifications (FCM). Best-effort; may be nil.
+type PushSender interface {
+	SendToUser(ctx context.Context, userID, title, body string, data map[string]string) error
+}
 
 // svcFacade is the subset of Service methods used by the HTTP handler,
 // so tests can substitute a stub without hitting the database.
@@ -24,8 +32,9 @@ type svcFacade interface {
 }
 
 type handler struct {
-	svc svcFacade
-	hub *sse.Hub
+	svc  svcFacade
+	hub  *sse.Hub
+	push PushSender
 }
 
 // --- GET /v1/users/search?q= ---
@@ -124,7 +133,45 @@ func (h *handler) sendRequest(w http.ResponseWriter, r *http.Request) {
 	if h.hub != nil {
 		h.hub.Publish(f.AddresseeID, sse.Event{Type: "friend.request_received", Data: f})
 	}
+	h.pushFriendRequest(r.Context(), f)
 	httpx.JSON(w, http.StatusCreated, f)
+}
+
+func (h *handler) pushFriendRequest(ctx context.Context, f Friendship) {
+	if h.push == nil {
+		return
+	}
+	name := "Someone"
+	if profile, err := h.svc.GetUserProfile(ctx, f.AddresseeID, f.RequesterID); err == nil {
+		name = userDisplayLabel(profile.UserSummary)
+	}
+	title := "Friend request"
+	body := fmt.Sprintf("%s wants to be friends", name)
+	data := map[string]string{
+		"type":          "friend.request_received",
+		"friendship_id": f.ID,
+		"requester_id":  f.RequesterID,
+	}
+	if err := h.push.SendToUser(ctx, f.AddresseeID, title, body, data); err != nil {
+		slog.Warn("friend request push failed", "err", err)
+	}
+}
+
+func userDisplayLabel(u UserSummary) string {
+	var parts []string
+	if u.Name != nil && strings.TrimSpace(*u.Name) != "" {
+		parts = append(parts, strings.TrimSpace(*u.Name))
+	}
+	if u.Surname != nil && strings.TrimSpace(*u.Surname) != "" {
+		parts = append(parts, strings.TrimSpace(*u.Surname))
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, " ")
+	}
+	if u.Nickname != nil && strings.TrimSpace(*u.Nickname) != "" {
+		return strings.TrimSpace(*u.Nickname)
+	}
+	return "Someone"
 }
 
 // --- POST /v1/friends/requests/{id}/accept ---

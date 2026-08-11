@@ -53,6 +53,7 @@ make test
 | HIST-01 | done | create match persists set_scores; invalid lines rejected |
 | PUSH-01 | done | register + unregister device token |
 | SOCIAL-01…02 | done | list/accept/reject/unfriend handler + service |
+| SOCIAL-03 | done | SendRequest FCM friend.request_received to addressee |
 | ID-BE-01 | done | AuthWithProvider + Refresh + Revoke |
 
 ## Öncelik (2 haftalık)

@@ -44,7 +44,7 @@ func New(
 
 	identity.Mount(r, identitySvc, hub, authMW)
 	score.Mount(r, scoreSvc, authMW)
-	social.Mount(r, socialSvc, hub, authMW)
+	social.Mount(r, socialSvc, hub, notifySvc, authMW)
 	tournament.Mount(r, tournamentSvc, authMW)
 	notify.Mount(r, notifySvc, authMW)
 

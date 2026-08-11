@@ -13,9 +13,9 @@ import (
 
 // Mount registers social routes onto the provided router.
 // All routes require an authenticated user (authMW). hub pushes
-// friend.* events to counterpart users.
-func Mount(r chi.Router, svc svcFacade, hub *sse.Hub, authMW func(http.Handler) http.Handler) {
-	h := &handler{svc: svc, hub: hub}
+// friend.* events to counterpart users; push is best-effort FCM.
+func Mount(r chi.Router, svc svcFacade, hub *sse.Hub, push PushSender, authMW func(http.Handler) http.Handler) {
+	h := &handler{svc: svc, hub: hub, push: push}
 
 	r.Group(func(r chi.Router) {
 		r.Use(authMW)

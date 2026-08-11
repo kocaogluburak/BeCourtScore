@@ -185,12 +185,29 @@ func TestGetUserProfile_Returns404WhenNotFound(t *testing.T) {
 
 // ── POST /v1/friends/requests ────────────────────────────────────────────────
 
+type fakePush struct {
+	calls int
+	last  string
+	typ   string
+}
+
+func (p *fakePush) SendToUser(_ context.Context, userID, _, _ string, data map[string]string) error {
+	p.calls++
+	p.last = userID
+	p.typ = data["type"]
+	return nil
+}
+
 func TestSendRequest_Returns201AndPublishesSSE(t *testing.T) {
-	svc := &stubService{friendship: Friendship{ID: "f1", RequesterID: "u1", AddresseeID: "u2", Status: "pending"}}
+	svc := &stubService{
+		friendship: Friendship{ID: "f1", RequesterID: "u1", AddresseeID: "u2", Status: "pending"},
+		profile:    UserProfile{UserSummary: UserSummary{ID: "u1", Nickname: ptr("ace")}},
+	}
 	hub := sse.NewHub()
 	ch, unsub := hub.Subscribe("u2")
 	defer unsub()
-	h := &handler{svc: svc, hub: hub}
+	push := &fakePush{}
+	h := &handler{svc: svc, hub: hub, push: push}
 
 	body, _ := json.Marshal(map[string]string{"user_id": "u2"})
 	w := httptest.NewRecorder()
@@ -206,6 +223,21 @@ func TestSendRequest_Returns201AndPublishesSSE(t *testing.T) {
 		}
 	default:
 		t.Error("expected SSE event for addressee")
+	}
+	if push.calls != 1 || push.last != "u2" || push.typ != "friend.request_received" {
+		t.Fatalf("push: calls=%d last=%q typ=%q", push.calls, push.last, push.typ)
+	}
+}
+
+func TestUserDisplayLabel(t *testing.T) {
+	if got := userDisplayLabel(UserSummary{Nickname: ptr("ace")}); got != "ace" {
+		t.Fatalf("nickname: got %q", got)
+	}
+	if got := userDisplayLabel(UserSummary{Name: ptr("Ada"), Surname: ptr("L")}); got != "Ada L" {
+		t.Fatalf("full name: got %q", got)
+	}
+	if got := userDisplayLabel(UserSummary{}); got != "Someone" {
+		t.Fatalf("empty: got %q", got)
 	}
 }
 
