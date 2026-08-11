@@ -28,5 +28,7 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 		r.Patch("/v1/live-matches/{id}", h.updateLiveMatch)
 		r.Post("/v1/live-matches/{id}/end", h.endLiveMatch)
 		r.Post("/v1/live-matches/{id}/cancel", h.cancelLiveMatch)
+		r.Post("/v1/live-matches/{id}/accept", h.acceptLiveMatch)
+		r.Post("/v1/live-matches/{id}/decline", h.declineLiveMatch)
 	})
 }

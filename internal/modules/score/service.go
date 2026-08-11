@@ -33,10 +33,12 @@ type store interface {
 	deleteByID(ctx context.Context, id, createdBy string) error
 	insertLive(ctx context.Context, createdBy string, in LiveStartInput) (LiveMatch, error)
 	getLiveByID(ctx context.Context, id string) (LiveMatch, error)
+	hasOpenLiveBetween(ctx context.Context, creatorID, opponentID string) (bool, error)
 	updateLiveScore(ctx context.Context, id string, u LiveScoreUpdate) (LiveMatch, error)
 	endLive(ctx context.Context, id string, in LiveEndInput, historyID *string) (LiveMatch, error)
 	cancelLive(ctx context.Context, id string) (LiveMatch, error)
-	listOpenLiveByCreator(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error)
+	acceptLive(ctx context.Context, id string) (LiveMatch, error)
+	listOpenLiveForParticipant(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error)
 }
 
 // Service is the score domain's business logic layer.
@@ -123,7 +125,8 @@ func (s *Service) DeleteMatch(ctx context.Context, userID, matchID string) error
 	return s.repo.deleteByID(ctx, matchID, userID)
 }
 
-// StartLiveMatch creates an in-progress session and notifies the registered opponent.
+// StartLiveMatch creates a live session. Registered opponents require friendship
+// and start as PENDING until they accept; guest opponents start IN_PROGRESS.
 func (s *Service) StartLiveMatch(ctx context.Context, userID string, in LiveStartInput) (LiveMatch, error) {
 	if !validSports[in.Sport] {
 		return LiveMatch{}, fmt.Errorf("%w: unknown sport %q", ErrInvalid, in.Sport)
@@ -144,12 +147,30 @@ func (s *Service) StartLiveMatch(ctx context.Context, userID string, in LiveStar
 		return LiveMatch{}, err
 	}
 
+	opp := registeredOpponentID(userID, in.PlayerAUserID, in.PlayerBUserID)
+	if opp != "" {
+		exists, err := s.repo.hasOpenLiveBetween(ctx, userID, opp)
+		if err != nil {
+			return LiveMatch{}, err
+		}
+		if exists {
+			return LiveMatch{}, fmt.Errorf("%w: open live match already exists with this opponent", ErrConflict)
+		}
+		in.Status = "PENDING"
+	} else {
+		in.Status = "IN_PROGRESS"
+	}
+
 	m, err := s.repo.insertLive(ctx, userID, in)
 	if err != nil {
 		return LiveMatch{}, err
 	}
-	s.publishLive("match.started", m)
-	s.pushOpponent(ctx, userID, m)
+	if m.Status == "PENDING" {
+		s.publishLive("match.invite", m)
+		s.pushInvite(ctx, userID, m)
+	} else {
+		s.publishLive("match.started", m)
+	}
 	return m, nil
 }
 
@@ -219,12 +240,12 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 	return ended, nil
 }
 
-// ListMyOpenLiveMatches returns in-progress sessions created by the user.
+// ListMyOpenLiveMatches returns PENDING/IN_PROGRESS sessions for creator or participants.
 func (s *Service) ListMyOpenLiveMatches(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error) {
-	return s.repo.listOpenLiveByCreator(ctx, userID, limit, offset)
+	return s.repo.listOpenLiveForParticipant(ctx, userID, limit, offset)
 }
 
-// CancelLiveMatch ends an in-progress session without writing match history.
+// CancelLiveMatch ends an open session without writing match history.
 // Creator only — used to abandon stuck / abandoned scoreboard sessions.
 func (s *Service) CancelLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error) {
 	m, err := s.repo.getLiveByID(ctx, id)
@@ -234,7 +255,7 @@ func (s *Service) CancelLiveMatch(ctx context.Context, userID, id string) (LiveM
 	if m.CreatedBy != userID {
 		return LiveMatch{}, ErrForbidden
 	}
-	if m.Status != "IN_PROGRESS" {
+	if m.Status != "IN_PROGRESS" && m.Status != "PENDING" {
 		return LiveMatch{}, ErrWrongState
 	}
 	cancelled, err := s.repo.cancelLive(ctx, id)
@@ -243,6 +264,50 @@ func (s *Service) CancelLiveMatch(ctx context.Context, userID, id string) (LiveM
 	}
 	s.publishLive("match.cancelled", cancelled)
 	return cancelled, nil
+}
+
+// AcceptLiveMatch lets the invited opponent promote PENDING → IN_PROGRESS.
+func (s *Service) AcceptLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error) {
+	m, err := s.repo.getLiveByID(ctx, id)
+	if err != nil {
+		return LiveMatch{}, err
+	}
+	if !isRegisteredOpponent(userID, m) {
+		return LiveMatch{}, ErrForbidden
+	}
+	if m.Status != "PENDING" {
+		return LiveMatch{}, ErrWrongState
+	}
+	if err := s.requireFriendIfSet(ctx, userID, &m.CreatedBy); err != nil {
+		return LiveMatch{}, err
+	}
+	accepted, err := s.repo.acceptLive(ctx, id)
+	if err != nil {
+		return LiveMatch{}, err
+	}
+	s.publishLive("match.accepted", accepted)
+	s.pushAccepted(ctx, accepted)
+	return accepted, nil
+}
+
+// DeclineLiveMatch lets the invited opponent reject a PENDING invite.
+func (s *Service) DeclineLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error) {
+	m, err := s.repo.getLiveByID(ctx, id)
+	if err != nil {
+		return LiveMatch{}, err
+	}
+	if !isRegisteredOpponent(userID, m) {
+		return LiveMatch{}, ErrForbidden
+	}
+	if m.Status != "PENDING" {
+		return LiveMatch{}, ErrWrongState
+	}
+	declined, err := s.repo.cancelLive(ctx, id)
+	if err != nil {
+		return LiveMatch{}, err
+	}
+	s.publishLive("match.declined", declined)
+	return declined, nil
 }
 
 func (s *Service) requireFriendIfSet(ctx context.Context, userID string, other *string) error {
@@ -287,7 +352,7 @@ func (s *Service) publishLive(typ string, m LiveMatch) {
 	}
 }
 
-func (s *Service) pushOpponent(ctx context.Context, starterID string, m LiveMatch) {
+func (s *Service) pushInvite(ctx context.Context, starterID string, m LiveMatch) {
 	if s.push == nil {
 		return
 	}
@@ -295,14 +360,29 @@ func (s *Service) pushOpponent(ctx context.Context, starterID string, m LiveMatc
 	if opp == "" {
 		return
 	}
-	title := "Live match started"
-	body := fmt.Sprintf("%s vs %s — tap to watch the score", m.PlayerAName, m.PlayerBName)
+	title := "Live match invite"
+	body := fmt.Sprintf("%s vs %s — accept to watch the score", m.PlayerAName, m.PlayerBName)
 	data := map[string]string{
-		"type":          "match.started",
+		"type":          "match.invite",
 		"live_match_id": m.ID,
 	}
 	if err := s.push.SendToUser(ctx, opp, title, body, data); err != nil {
-		slog.Warn("live match push failed", "err", err)
+		slog.Warn("live match invite push failed", "err", err)
+	}
+}
+
+func (s *Service) pushAccepted(ctx context.Context, m LiveMatch) {
+	if s.push == nil {
+		return
+	}
+	title := "Live match accepted"
+	body := fmt.Sprintf("%s vs %s — opponent is watching", m.PlayerAName, m.PlayerBName)
+	data := map[string]string{
+		"type":          "match.accepted",
+		"live_match_id": m.ID,
+	}
+	if err := s.push.SendToUser(ctx, m.CreatedBy, title, body, data); err != nil {
+		slog.Warn("live match accepted push failed", "err", err)
 	}
 }
 
@@ -318,10 +398,27 @@ func liveRecipientIDs(m LiveMatch) []string {
 }
 
 func opponentUserID(starterID string, m LiveMatch) string {
-	for _, id := range []*string{m.PlayerAUserID, m.PlayerBUserID} {
+	return registeredOpponentID(starterID, m.PlayerAUserID, m.PlayerBUserID)
+}
+
+func registeredOpponentID(starterID string, a, b *string) string {
+	for _, id := range []*string{a, b} {
 		if id != nil && *id != "" && *id != starterID {
 			return *id
 		}
 	}
 	return ""
+}
+
+func isRegisteredOpponent(userID string, m LiveMatch) bool {
+	if m.CreatedBy == userID {
+		return false
+	}
+	if m.PlayerAUserID != nil && *m.PlayerAUserID == userID {
+		return true
+	}
+	if m.PlayerBUserID != nil && *m.PlayerBUserID == userID {
+		return true
+	}
+	return false
 }

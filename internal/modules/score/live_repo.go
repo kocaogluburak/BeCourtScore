@@ -44,6 +44,7 @@ type LiveStartInput struct {
 	SetsToWin        int
 	AdvantageEnabled bool
 	PointsToWin      int
+	Status           string // PENDING | IN_PROGRESS; set by Service before insert
 }
 
 type LiveScoreUpdate struct {
@@ -72,6 +73,8 @@ const liveCols = `id, sport, status, player_a_name, player_b_name, player_a_user
 	sets_a, sets_b, games_a, games_b, score_a, score_b, is_tie_break, sets_to_win, advantage_enabled,
 	points_to_win, winner_side, created_by, history_match_id, started_at, ended_at, updated_at`
 
+const openLiveStatuses = `status IN ('PENDING', 'IN_PROGRESS')`
+
 func scanLive(row pgx.Row) (LiveMatch, error) {
 	var m LiveMatch
 	err := row.Scan(
@@ -84,14 +87,18 @@ func scanLive(row pgx.Row) (LiveMatch, error) {
 }
 
 func (r *repo) insertLive(ctx context.Context, createdBy string, in LiveStartInput) (LiveMatch, error) {
+	status := in.Status
+	if status == "" {
+		status = "IN_PROGRESS"
+	}
 	const q = `
 		INSERT INTO live_matches (
-			sport, player_a_name, player_b_name, player_a_user_id, player_b_user_id,
+			sport, status, player_a_name, player_b_name, player_a_user_id, player_b_user_id,
 			sets_to_win, advantage_enabled, points_to_win, created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING ` + liveCols
 	return scanLive(r.pool.QueryRow(ctx, q,
-		in.Sport, in.PlayerAName, in.PlayerBName, in.PlayerAUserID, in.PlayerBUserID,
+		in.Sport, status, in.PlayerAName, in.PlayerBName, in.PlayerAUserID, in.PlayerBUserID,
 		in.SetsToWin, in.AdvantageEnabled, in.PointsToWin, createdBy,
 	))
 }
@@ -105,12 +112,24 @@ func (r *repo) getLiveByID(ctx context.Context, id string) (LiveMatch, error) {
 	return m, err
 }
 
+func (r *repo) hasOpenLiveBetween(ctx context.Context, creatorID, opponentID string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM live_matches
+			WHERE created_by = $1
+			  AND `+openLiveStatuses+`
+			  AND (player_a_user_id = $2 OR player_b_user_id = $2)
+		)`, creatorID, opponentID).Scan(&exists)
+	return exists, err
+}
+
 func (r *repo) updateLiveScore(ctx context.Context, id string, u LiveScoreUpdate) (LiveMatch, error) {
 	m, err := r.getLiveByID(ctx, id)
 	if err != nil {
 		return LiveMatch{}, err
 	}
-	if m.Status != "IN_PROGRESS" {
+	if m.Status != "IN_PROGRESS" && m.Status != "PENDING" {
 		return LiveMatch{}, ErrWrongState
 	}
 	if u.SetsA != nil {
@@ -142,7 +161,7 @@ func (r *repo) updateLiveScore(ctx context.Context, id string, u LiveScoreUpdate
 			sets_a = $2, sets_b = $3, games_a = $4, games_b = $5,
 			score_a = $6, score_b = $7, is_tie_break = $8, winner_side = $9,
 			updated_at = NOW()
-		WHERE id = $1 AND status = 'IN_PROGRESS'
+		WHERE id = $1 AND ` + openLiveStatuses + `
 		RETURNING ` + liveCols
 	return scanLive(r.pool.QueryRow(ctx, q, id,
 		m.SetsA, m.SetsB, m.GamesA, m.GamesB, m.ScoreA, m.ScoreB, m.IsTieBreak, m.WinnerSide,
@@ -156,13 +175,12 @@ func (r *repo) endLive(ctx context.Context, id string, in LiveEndInput, historyI
 			sets_a = $2, sets_b = $3, games_a = $4, games_b = $5,
 			score_a = $6, score_b = $7, is_tie_break = $8, winner_side = $9,
 			history_match_id = $10, ended_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND status = 'IN_PROGRESS'
+		WHERE id = $1 AND ` + openLiveStatuses + `
 		RETURNING ` + liveCols
 	m, err := scanLive(r.pool.QueryRow(ctx, q, id,
 		in.SetsA, in.SetsB, in.GamesA, in.GamesB, in.ScoreA, in.ScoreB, in.IsTieBreak, in.WinnerSide, historyID,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
-		// either missing or already ended
 		existing, gerr := r.getLiveByID(ctx, id)
 		if gerr != nil {
 			return LiveMatch{}, gerr
@@ -179,7 +197,7 @@ func (r *repo) cancelLive(ctx context.Context, id string) (LiveMatch, error) {
 	const q = `
 		UPDATE live_matches SET
 			status = 'ENDED', ended_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND status = 'IN_PROGRESS'
+		WHERE id = $1 AND ` + openLiveStatuses + `
 		RETURNING ` + liveCols
 	m, err := scanLive(r.pool.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -195,19 +213,42 @@ func (r *repo) cancelLive(ctx context.Context, id string) (LiveMatch, error) {
 	return m, err
 }
 
-func (r *repo) listOpenLiveByCreator(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error) {
+func (r *repo) acceptLive(ctx context.Context, id string) (LiveMatch, error) {
+	const q = `
+		UPDATE live_matches SET
+			status = 'IN_PROGRESS', updated_at = NOW()
+		WHERE id = $1 AND status = 'PENDING'
+		RETURNING ` + liveCols
+	m, err := scanLive(r.pool.QueryRow(ctx, q, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing, gerr := r.getLiveByID(ctx, id)
+		if gerr != nil {
+			return LiveMatch{}, gerr
+		}
+		if existing.Status != "PENDING" {
+			return LiveMatch{}, ErrWrongState
+		}
+		return LiveMatch{}, ErrNotFound
+	}
+	return m, err
+}
+
+func (r *repo) listOpenLiveForParticipant(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error) {
 	var total int64
-	if err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM live_matches WHERE created_by = $1 AND status = 'IN_PROGRESS'`,
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM live_matches
+		WHERE `+openLiveStatuses+`
+		  AND (created_by = $1 OR player_a_user_id = $1 OR player_b_user_id = $1)`,
 		userID,
 	).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.pool.Query(ctx,
-		`SELECT `+liveCols+` FROM live_matches
-		 WHERE created_by = $1 AND status = 'IN_PROGRESS'
-		 ORDER BY started_at DESC
-		 LIMIT $2 OFFSET $3`,
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+liveCols+` FROM live_matches
+		WHERE `+openLiveStatuses+`
+		  AND (created_by = $1 OR player_a_user_id = $1 OR player_b_user_id = $1)
+		ORDER BY started_at DESC
+		LIMIT $2 OFFSET $3`,
 		userID, limit, offset,
 	)
 	if err != nil {

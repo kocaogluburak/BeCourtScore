@@ -103,6 +103,53 @@ func TestCancelLiveMatch_Returns200(t *testing.T) {
 	}
 }
 
+func TestAcceptLiveMatch_Returns200(t *testing.T) {
+	live := baseLive()
+	live.Status = "PENDING"
+	svc := &stubService{live: live}
+	h := &handler{svc: svc}
+	r := authedRequest(http.MethodPost, "/v1/live-matches/live-1/accept", nil, "user-opp")
+	r.SetPathValue("id", "live-1")
+	w := httptest.NewRecorder()
+	h.acceptLiveMatch(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var got LiveMatch
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "IN_PROGRESS" {
+		t.Fatalf("status=%q", got.Status)
+	}
+}
+
+func TestDeclineLiveMatch_Returns200(t *testing.T) {
+	live := baseLive()
+	live.Status = "PENDING"
+	svc := &stubService{live: live}
+	h := &handler{svc: svc}
+	r := authedRequest(http.MethodPost, "/v1/live-matches/live-1/decline", nil, "user-opp")
+	r.SetPathValue("id", "live-1")
+	w := httptest.NewRecorder()
+	h.declineLiveMatch(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestStartLiveMatch_Conflict(t *testing.T) {
+	svc := &stubService{liveErr: ErrConflict}
+	h := &handler{svc: svc}
+	body := []byte(`{"sport":"TENNIS","player_a_name":"Ada","player_b_name":"Grace","player_b_user_id":"user-opp"}`)
+	r := authedRequest(http.MethodPost, "/v1/live-matches", body, "user-abc")
+	w := httptest.NewRecorder()
+	h.startLiveMatch(w, r)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status=%d", w.Code)
+	}
+}
+
 func TestOpponentUserID(t *testing.T) {
 	opp := "opp"
 	m := LiveMatch{CreatedBy: "me", PlayerBUserID: &opp}

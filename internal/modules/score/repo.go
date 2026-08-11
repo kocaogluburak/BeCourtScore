@@ -166,4 +166,5 @@ var (
 	ErrNotFound  = errors.New("not found")
 	ErrForbidden = errors.New("forbidden")
 	ErrInvalid   = errors.New("invalid input")
+	ErrConflict  = errors.New("conflict")
 )

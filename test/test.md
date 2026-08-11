@@ -26,8 +26,8 @@ make test
 | `internal/modules/social/handler_test.go` | search, profile, send/accept/reject/list/unfriend |
 | `internal/modules/social/service_test.go` | request state machine, reopen-after-reject, AreFriends, profile status |
 | `internal/modules/score/handler_test.go` | match CRUD + friendship gate |
-| `internal/modules/score/live_handler_test.go` | live match start/get/update/end/list/cancel |
-| `internal/modules/score/service_test.go` | friendship gate, live visibility, end→history, cancel no history, list open, push opponent |
+| `internal/modules/score/live_handler_test.go` | live match start/get/update/end/list/cancel/accept/decline + conflict |
+| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, duplicate open 409, accept/decline, participant list, push invite |
 | `internal/modules/notify/handler_test.go` | device register + unregister |
 | `internal/modules/notify/service_test.go` | Register/Unregister validation + SendToUser fan-out |
 | `internal/modules/notify/fcm_test.go` | NewFCMSenderFromEnv → Noop when unset/bad path/invalid JSON |
@@ -48,6 +48,8 @@ make test
 | SCORE-01…03 | n/a (client) | score module = match history API |
 | LIVE-01 | done | start live match → 201; service end→history |
 | LIVE-02 | done | list open + cancel without history |
+| LIVE-03 | done | friend start → PENDING + match.invite; guest → IN_PROGRESS |
+| LIVE-04 | done | accept/decline; list includes opponent; duplicate open → 409 |
 | PUSH-01 | done | register + unregister device token |
 | SOCIAL-01…02 | done | list/accept/reject/unfriend handler + service |
 | ID-BE-01 | done | AuthWithProvider + Refresh + Revoke |

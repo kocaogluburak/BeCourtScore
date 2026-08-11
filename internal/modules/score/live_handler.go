@@ -44,6 +44,8 @@ func (h *handler) startLiveMatch(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, ErrForbidden):
 			httpx.Error(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, ErrConflict):
+			httpx.Error(w, http.StatusConflict, err.Error())
 		default:
 			httpx.Error(w, http.StatusInternalServerError, "failed to start live match")
 		}
@@ -177,6 +179,46 @@ func (h *handler) cancelLiveMatch(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusConflict, "live match already ended")
 		default:
 			httpx.Error(w, http.StatusInternalServerError, "failed to cancel live match")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, m)
+}
+
+func (h *handler) acceptLiveMatch(w http.ResponseWriter, r *http.Request) {
+	userID, _ := authkit.UserIDFromCtx(r.Context())
+	id := r.PathValue("id")
+	m, err := h.svc.AcceptLiveMatch(r.Context(), userID, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "live match not found")
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "forbidden")
+		case errors.Is(err, ErrWrongState):
+			httpx.Error(w, http.StatusConflict, "live match is not pending")
+		default:
+			httpx.Error(w, http.StatusInternalServerError, "failed to accept live match")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, m)
+}
+
+func (h *handler) declineLiveMatch(w http.ResponseWriter, r *http.Request) {
+	userID, _ := authkit.UserIDFromCtx(r.Context())
+	id := r.PathValue("id")
+	m, err := h.svc.DeclineLiveMatch(r.Context(), userID, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "live match not found")
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "forbidden")
+		case errors.Is(err, ErrWrongState):
+			httpx.Error(w, http.StatusConflict, "live match is not pending")
+		default:
+			httpx.Error(w, http.StatusInternalServerError, "failed to decline live match")
 		}
 		return
 	}

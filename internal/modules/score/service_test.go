@@ -19,23 +19,28 @@ func (f *fakeFriends) AreFriends(context.Context, string, string) (bool, error) 
 type fakePush struct {
 	calls int
 	last  string
+	typ   string
 }
 
-func (p *fakePush) SendToUser(_ context.Context, userID, _, _ string, _ map[string]string) error {
+func (p *fakePush) SendToUser(_ context.Context, userID, _, _ string, data map[string]string) error {
 	p.calls++
 	p.last = userID
+	if data != nil {
+		p.typ = data["type"]
+	}
 	return nil
 }
 
 type fakeScoreStore struct {
-	match     Match
-	live      LiveMatch
-	matches   []Match
-	insertErr error
-	getErr    error
-	liveErr   error
-	ended     bool
-	historyID string
+	match      Match
+	live       LiveMatch
+	matches    []Match
+	insertErr  error
+	getErr     error
+	liveErr    error
+	ended      bool
+	historyID  string
+	openExists bool
 }
 
 func (f *fakeScoreStore) insert(_ context.Context, createdBy string, in CreateInput) (Match, error) {
@@ -66,8 +71,12 @@ func (f *fakeScoreStore) insertLive(_ context.Context, createdBy string, in Live
 	if f.liveErr != nil {
 		return LiveMatch{}, f.liveErr
 	}
+	status := in.Status
+	if status == "" {
+		status = "IN_PROGRESS"
+	}
 	m := LiveMatch{
-		ID: "live-1", Sport: in.Sport, Status: "LIVE",
+		ID: "live-1", Sport: in.Sport, Status: status,
 		PlayerAName: in.PlayerAName, PlayerBName: in.PlayerBName,
 		PlayerAUserID: in.PlayerAUserID, PlayerBUserID: in.PlayerBUserID,
 		SetsToWin: in.SetsToWin, AdvantageEnabled: in.AdvantageEnabled, PointsToWin: in.PointsToWin,
@@ -82,6 +91,10 @@ func (f *fakeScoreStore) getLiveByID(context.Context, string) (LiveMatch, error)
 		return LiveMatch{}, f.liveErr
 	}
 	return f.live, nil
+}
+
+func (f *fakeScoreStore) hasOpenLiveBetween(context.Context, string, string) (bool, error) {
+	return f.openExists, nil
 }
 
 func (f *fakeScoreStore) updateLiveScore(_ context.Context, _ string, u LiveScoreUpdate) (LiveMatch, error) {
@@ -109,7 +122,7 @@ func (f *fakeScoreStore) endLive(_ context.Context, _ string, in LiveEndInput, h
 
 func (f *fakeScoreStore) cancelLive(_ context.Context, _ string) (LiveMatch, error) {
 	m := f.live
-	if m.Status != "IN_PROGRESS" && m.Status != "LIVE" {
+	if m.Status != "IN_PROGRESS" && m.Status != "PENDING" {
 		return LiveMatch{}, ErrWrongState
 	}
 	m.Status = "ENDED"
@@ -118,8 +131,28 @@ func (f *fakeScoreStore) cancelLive(_ context.Context, _ string) (LiveMatch, err
 	return m, nil
 }
 
-func (f *fakeScoreStore) listOpenLiveByCreator(_ context.Context, userID string, _, _ int) ([]LiveMatch, int64, error) {
-	if f.live.CreatedBy == userID && (f.live.Status == "IN_PROGRESS" || f.live.Status == "LIVE") {
+func (f *fakeScoreStore) acceptLive(_ context.Context, _ string) (LiveMatch, error) {
+	m := f.live
+	if m.Status != "PENDING" {
+		return LiveMatch{}, ErrWrongState
+	}
+	m.Status = "IN_PROGRESS"
+	f.live = m
+	return m, nil
+}
+
+func (f *fakeScoreStore) listOpenLiveForParticipant(_ context.Context, userID string, _, _ int) ([]LiveMatch, int64, error) {
+	open := f.live.Status == "IN_PROGRESS" || f.live.Status == "PENDING"
+	if !open {
+		return nil, 0, nil
+	}
+	if f.live.CreatedBy == userID {
+		return []LiveMatch{f.live}, 1, nil
+	}
+	if f.live.PlayerAUserID != nil && *f.live.PlayerAUserID == userID {
+		return []LiveMatch{f.live}, 1, nil
+	}
+	if f.live.PlayerBUserID != nil && *f.live.PlayerBUserID == userID {
 		return []LiveMatch{f.live}, 1, nil
 	}
 	return nil, 0, nil
@@ -176,8 +209,41 @@ func TestStartLiveMatch_FriendshipGate(t *testing.T) {
 	if err != nil || got.ID != "live-1" {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
-	if push.calls != 1 || push.last != "u2" {
-		t.Fatalf("push calls=%d last=%q", push.calls, push.last)
+	if got.Status != "PENDING" {
+		t.Fatalf("status=%q want PENDING", got.Status)
+	}
+	if push.calls != 1 || push.last != "u2" || push.typ != "match.invite" {
+		t.Fatalf("push calls=%d last=%q typ=%q", push.calls, push.last, push.typ)
+	}
+}
+
+func TestStartLiveMatch_GuestIsInProgress(t *testing.T) {
+	store := &fakeScoreStore{}
+	push := &fakePush{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, push)
+	got, err := svc.StartLiveMatch(context.Background(), "u1", LiveStartInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "Guest",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "IN_PROGRESS" {
+		t.Fatalf("status=%q", got.Status)
+	}
+	if push.calls != 0 {
+		t.Fatalf("push calls=%d", push.calls)
+	}
+}
+
+func TestStartLiveMatch_DuplicateOpenConflict(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{openExists: true}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	_, err := svc.StartLiveMatch(context.Background(), "u1", LiveStartInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", PlayerBUserID: &opp,
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
@@ -234,18 +300,71 @@ func TestCancelLiveMatch_NoHistory(t *testing.T) {
 	}
 }
 
-func TestListMyOpenLiveMatches(t *testing.T) {
+func TestCancelLiveMatch_Pending(t *testing.T) {
 	store := &fakeScoreStore{live: LiveMatch{
-		ID: "live-1", Status: "IN_PROGRESS", CreatedBy: "u1",
+		ID: "live-1", Status: "PENDING", CreatedBy: "u1",
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	got, err := svc.CancelLiveMatch(context.Background(), "u1", "live-1")
+	if err != nil || got.Status != "ENDED" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+func TestListMyOpenLiveMatches(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Status: "PENDING", CreatedBy: "u1", PlayerBUserID: &opp,
 	}}
 	svc := newScoreService(store, &fakeFriends{}, nil)
 	items, total, err := svc.ListMyOpenLiveMatches(context.Background(), "u1", 20, 0)
 	if err != nil || total != 1 || len(items) != 1 {
 		t.Fatalf("items=%v total=%d err=%v", items, total, err)
 	}
-	empty, total2, err := svc.ListMyOpenLiveMatches(context.Background(), "other", 20, 0)
-	if err != nil || total2 != 0 || len(empty) != 0 {
-		t.Fatalf("empty=%v total=%d err=%v", empty, total2, err)
+	asOpp, total2, err := svc.ListMyOpenLiveMatches(context.Background(), "u2", 20, 0)
+	if err != nil || total2 != 1 || len(asOpp) != 1 {
+		t.Fatalf("opp items=%v total=%d err=%v", asOpp, total2, err)
+	}
+	empty, total3, err := svc.ListMyOpenLiveMatches(context.Background(), "other", 20, 0)
+	if err != nil || total3 != 0 || len(empty) != 0 {
+		t.Fatalf("empty=%v total=%d err=%v", empty, total3, err)
+	}
+}
+
+func TestAcceptLiveMatch(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Status: "PENDING", CreatedBy: "u1",
+		PlayerAName: "A", PlayerBName: "B", PlayerBUserID: &opp,
+	}}
+	push := &fakePush{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, push)
+
+	if _, err := svc.AcceptLiveMatch(context.Background(), "u1", "live-1"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("creator accept err=%v", err)
+	}
+	got, err := svc.AcceptLiveMatch(context.Background(), "u2", "live-1")
+	if err != nil || got.Status != "IN_PROGRESS" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	if push.calls != 1 || push.last != "u1" || push.typ != "match.accepted" {
+		t.Fatalf("push calls=%d last=%q typ=%q", push.calls, push.last, push.typ)
+	}
+}
+
+func TestDeclineLiveMatch(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Status: "PENDING", CreatedBy: "u1", PlayerBUserID: &opp,
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	got, err := svc.DeclineLiveMatch(context.Background(), "u2", "live-1")
+	if err != nil || got.Status != "ENDED" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	store.live.Status = "IN_PROGRESS"
+	if _, err := svc.DeclineLiveMatch(context.Background(), "u2", "live-1"); !errors.Is(err, ErrWrongState) {
+		t.Fatalf("err=%v", err)
 	}
 }
 

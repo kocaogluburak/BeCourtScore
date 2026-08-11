@@ -63,7 +63,13 @@ func (s *stubService) StartLiveMatch(_ context.Context, userID string, in LiveSt
 	m := s.live
 	m.CreatedBy = userID
 	m.Sport = in.Sport
-	m.Status = "IN_PROGRESS"
+	if in.Status != "" {
+		m.Status = in.Status
+	} else if in.PlayerAUserID != nil || in.PlayerBUserID != nil {
+		m.Status = "PENDING"
+	} else {
+		m.Status = "IN_PROGRESS"
+	}
 	return m, nil
 }
 
@@ -91,6 +97,24 @@ func (s *stubService) ListMyOpenLiveMatches(_ context.Context, _ string, limit, 
 }
 
 func (s *stubService) CancelLiveMatch(_ context.Context, _, _ string) (LiveMatch, error) {
+	if s.liveErr != nil {
+		return LiveMatch{}, s.liveErr
+	}
+	m := s.live
+	m.Status = "ENDED"
+	return m, nil
+}
+
+func (s *stubService) AcceptLiveMatch(_ context.Context, _, _ string) (LiveMatch, error) {
+	if s.liveErr != nil {
+		return LiveMatch{}, s.liveErr
+	}
+	m := s.live
+	m.Status = "IN_PROGRESS"
+	return m, nil
+}
+
+func (s *stubService) DeclineLiveMatch(_ context.Context, _, _ string) (LiveMatch, error) {
 	if s.liveErr != nil {
 		return LiveMatch{}, s.liveErr
 	}
