@@ -54,6 +54,7 @@ make test
 | PUSH-01 | done | register + unregister device token |
 | SOCIAL-01…02 | done | list/accept/reject/unfriend handler + service |
 | SOCIAL-03 | done | SendRequest FCM friend.request_received to addressee |
+| SOCIAL-04 | done | AcceptRequest FCM friend.request_accepted to requester |
 | ID-BE-01 | done | AuthWithProvider + Refresh + Revoke |
 
 ## Öncelik (2 haftalık)

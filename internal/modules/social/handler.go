@@ -192,7 +192,28 @@ func (h *handler) acceptRequest(w http.ResponseWriter, r *http.Request) {
 	if h.hub != nil {
 		h.hub.Publish(f.RequesterID, sse.Event{Type: "friend.request_accepted", Data: f})
 	}
+	h.pushFriendAccepted(r.Context(), f)
 	httpx.JSON(w, http.StatusOK, f)
+}
+
+func (h *handler) pushFriendAccepted(ctx context.Context, f Friendship) {
+	if h.push == nil {
+		return
+	}
+	name := "Someone"
+	if profile, err := h.svc.GetUserProfile(ctx, f.RequesterID, f.AddresseeID); err == nil {
+		name = userDisplayLabel(profile.UserSummary)
+	}
+	title := "Friend request accepted"
+	body := fmt.Sprintf("%s accepted your friend request", name)
+	data := map[string]string{
+		"type":          "friend.request_accepted",
+		"friendship_id": f.ID,
+		"addressee_id":  f.AddresseeID,
+	}
+	if err := h.push.SendToUser(ctx, f.RequesterID, title, body, data); err != nil {
+		slog.Warn("friend accepted push failed", "err", err)
+	}
 }
 
 // --- POST /v1/friends/requests/{id}/reject ---

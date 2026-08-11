@@ -269,11 +269,15 @@ func TestSendRequest_Returns409OnDuplicate(t *testing.T) {
 // ── POST /v1/friends/requests/{id}/accept ────────────────────────────────────
 
 func TestAcceptRequest_Returns200AndNotifiesRequester(t *testing.T) {
-	svc := &stubService{friendship: Friendship{ID: "f1", RequesterID: "u1", AddresseeID: "u2", Status: "accepted"}}
+	svc := &stubService{
+		friendship: Friendship{ID: "f1", RequesterID: "u1", AddresseeID: "u2", Status: "accepted"},
+		profile:    UserProfile{UserSummary: UserSummary{ID: "u2", Nickname: ptr("bob")}},
+	}
 	hub := sse.NewHub()
 	ch, unsub := hub.Subscribe("u1")
 	defer unsub()
-	h := &handler{svc: svc, hub: hub}
+	push := &fakePush{}
+	h := &handler{svc: svc, hub: hub, push: push}
 
 	w := httptest.NewRecorder()
 	h.acceptRequest(w, authedRequest(http.MethodPost, "/v1/friends/requests/f1/accept", nil, "u2"))
@@ -288,6 +292,9 @@ func TestAcceptRequest_Returns200AndNotifiesRequester(t *testing.T) {
 		}
 	default:
 		t.Error("expected SSE event for requester")
+	}
+	if push.calls != 1 || push.last != "u1" || push.typ != "friend.request_accepted" {
+		t.Fatalf("push: calls=%d last=%q typ=%q", push.calls, push.last, push.typ)
 	}
 }
 
