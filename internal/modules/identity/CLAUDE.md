@@ -11,21 +11,22 @@ the current-user profile (`/v1/me`), and mounts the SSE stream (`/v1/events`).
 |------|------|
 | `routes.go` | Mounts routes; public `POST /v1/auth/{provider}` + `refresh`, protected `logout`/`me`, SSE `/v1/events` |
 | `handler.go` | HTTP handlers; request/response DTOs, validation, error mapping |
-| `service.go` | Business logic: verify provider token, upsert user, issue/rotate tokens |
+| `service.go` | Business logic: verify provider token, upsert user, issue/rotate tokens, delete account |
 | `provider.go` | `IdentityProvider` interface (`Verify(idToken) → external identity`) |
 | `google.go` | Google provider impl — verifies against `GOOGLE_CLIENT_IDS` |
 | `repo.go` | Postgres: `users`, `auth_identities`, `refresh_tokens` |
-| `*_test.go` | `handler_test.go`, `google_test.go` — part of the 15-test suite |
+| `*_test.go` | `handler_test.go`, `google_test.go`, `service_test.go` |
 
 ## Routes
 
 ```
-POST  /v1/auth/{provider}   → verify id_token, upsert user, return {access_token, refresh_token, user, is_new_user}
-POST  /v1/auth/refresh      → rotate token pair (refresh in body)
-POST  /v1/auth/logout       → revoke refresh token (Bearer + refresh body)
-GET   /v1/me                → current profile (Bearer)
-PATCH /v1/me                → update nickname/name/surname/profile_icon → pushes SSE user.updated
-GET   /v1/events            → per-user SSE stream (Bearer)
+POST   /v1/auth/{provider}   → verify id_token, upsert user, return {access_token, refresh_token, user, is_new_user}
+POST   /v1/auth/refresh      → rotate token pair (refresh in body)
+POST   /v1/auth/logout       → revoke refresh token (Bearer + refresh body)
+GET    /v1/me                → current profile (Bearer)
+PATCH  /v1/me                → update nickname/name/surname/profile_icon → pushes SSE user.updated
+DELETE /v1/me                → permanently delete account (hard delete + FK cascades) → 204
+GET    /v1/events            → per-user SSE stream (Bearer)
 ```
 
 ## Flow
@@ -34,6 +35,7 @@ GET   /v1/events            → per-user SSE stream (Bearer)
 2. On success, upsert `users` + `auth_identities`; issue access JWT (~15m) + refresh (stored hashed).
 3. `refresh` rotates the pair; `logout` revokes.
 4. `PATCH /v1/me` publishes `user.updated` on the SSE hub so other sessions update live.
+5. `DELETE /v1/me` hard-deletes the user row; related data cascades or SET NULL via FK rules (see migration `013_user_delete_fks.sql` for tournament match reporters).
 
 ## Adding a new auth provider
 
@@ -50,4 +52,4 @@ GET   /v1/events            → per-user SSE stream (Bearer)
 
 ## After changes
 
-`cd BeCourtScore && go test ./internal/modules/identity/...` then `go test ./...` (15 tests must pass).
+`cd BeCourtScore && go test ./internal/modules/identity/...` then `go test ./...`. Inventory: `BeCourtScore/test/test.md`.

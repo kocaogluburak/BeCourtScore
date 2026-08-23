@@ -97,6 +97,25 @@ func (f *fakeStore) updateUser(_ context.Context, id string, in UpdateInput) (Us
 	return u, nil
 }
 
+func (f *fakeStore) deleteUser(_ context.Context, id string) error {
+	u, ok := f.byID[id]
+	if !ok {
+		return ErrNotFound
+	}
+	delete(f.byID, id)
+	for k, v := range f.byIdentity {
+		if v.ID == id {
+			delete(f.byIdentity, k)
+		}
+	}
+	for hash, uid := range f.tokens {
+		if uid == u.ID {
+			delete(f.tokens, hash)
+		}
+	}
+	return nil
+}
+
 func (f *fakeStore) saveRefreshToken(_ context.Context, userID, hash string, _ time.Time) error {
 	f.tokens[hash] = userID
 	return nil
@@ -265,5 +284,35 @@ func TestRevokeSession_RemovesToken(t *testing.T) {
 	_, _, err = svc.RefreshSession(context.Background(), session.RefreshToken)
 	if err == nil {
 		t.Fatal("expected refresh to fail after revoke")
+	}
+}
+
+func TestDeleteUser_RemovesAccount(t *testing.T) {
+	store := newFakeStore()
+	svc := testService(store)
+
+	_, user, _, err := svc.AuthWithProvider(context.Background(), "google", "tok")
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	if err := svc.DeleteUser(context.Background(), user.ID); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	if _, err := svc.GetUser(context.Background(), user.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+	if len(store.byID) != 0 {
+		t.Fatalf("expected byID empty, got %d", len(store.byID))
+	}
+	if len(store.tokens) != 0 {
+		t.Fatalf("expected tokens cleared, got %d", len(store.tokens))
+	}
+}
+
+func TestDeleteUser_NotFound(t *testing.T) {
+	svc := testService(newFakeStore())
+	err := svc.DeleteUser(context.Background(), "missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }

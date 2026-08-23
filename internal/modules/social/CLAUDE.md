@@ -48,4 +48,4 @@ POST   /v1/friends/requests/{id}/reject → addressee only
 
 ## After changes
 
-`cd BeCourtScore && go test ./internal/modules/social/...` then `go test ./...` (15 tests must pass).
+`cd BeCourtScore && go test ./internal/modules/social/...` then `go test ./...`. Inventory: `BeCourtScore/test/test.md`.

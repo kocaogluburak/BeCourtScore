@@ -18,6 +18,7 @@ type svcFacade interface {
 	RevokeSession(ctx context.Context, rawRefreshToken string) error
 	GetUser(ctx context.Context, userID string) (User, error)
 	UpdateUser(ctx context.Context, userID string, in UpdateInput) (User, error)
+	DeleteUser(ctx context.Context, userID string) error
 }
 
 type handler struct {
@@ -157,4 +158,21 @@ func (h *handler) patchMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.JSON(w, http.StatusOK, user)
+}
+
+// --- profile: DELETE /v1/me ---
+
+func (h *handler) deleteMe(w http.ResponseWriter, r *http.Request) {
+	userID, _ := authkit.UserIDFromCtx(r.Context())
+
+	if err := h.svc.DeleteUser(r.Context(), userID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.Error(w, http.StatusNotFound, "user not found")
+			return
+		}
+		httpx.Error(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

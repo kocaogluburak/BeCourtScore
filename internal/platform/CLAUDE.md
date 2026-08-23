@@ -39,4 +39,4 @@ Standard events besides domain ones: `connected`, `heartbeat` (~25s).
 
 ## After changes
 
-`cd BeCourtScore && go test ./internal/platform/...` then `go test ./...` (authkit + sse + httpx are in the 15-test suite).
+`cd BeCourtScore && go test ./internal/platform/...` then `go test ./...`. Inventory: `BeCourtScore/test/test.md`.

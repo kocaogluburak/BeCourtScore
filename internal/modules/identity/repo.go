@@ -126,6 +126,19 @@ func (r *repo) getUserByID(ctx context.Context, id string) (User, error) {
 	return u, nil
 }
 
+// deleteUser permanently removes the user row. Related rows cascade or SET NULL
+// via FK rules. Returns ErrNotFound when no row matched.
+func (r *repo) deleteUser(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("deleteUser: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // updateUser applies non-nil fields from UpdateInput.
 func (r *repo) updateUser(ctx context.Context, id string, in UpdateInput) (User, error) {
 	const q = `

@@ -2,19 +2,20 @@
 
 > Focused notes for the `score` module. See `../../../CLAUDE.md` for the whole backend.
 
-Stores finished match results and serves match history (own + friends').
+Stores finished match results **and** in-progress live shared scoreboards.
 
 ## Files
 
 | File | Role |
 |------|------|
-| `routes.go` | Mounts `/v1/matches/*` and `/v1/users/{userID}/matches` (all Bearer) |
-| `handler.go` | Handlers, DTOs, validation, pagination wiring |
-| `service.go` | Business rules; visibility checks via `FriendChecker` (implemented by `social.Service`, wired in `main.go`) |
-| `repo.go` | Postgres access to the partitioned `matches` table |
-| `handler_test.go` | Handler tests |
+| `routes.go` | `/v1/matches/*`, `/v1/live-matches/*`, `/v1/users/{userID}/matches` (all Bearer) |
+| `handler.go` | Finished-match handlers, DTOs, pagination |
+| `live_handler.go` | Live start/get/update/end/list/cancel/accept/decline |
+| `service.go` | History rules + live state machine; `FriendChecker`; optional `PushSender` |
+| `repo.go` / `live_repo.go` | Partitioned `matches` + live table |
+| `*_test.go` | handler, live_handler, service |
 
-## Routes
+## History routes
 
 ```
 POST   /v1/matches             → record a finished match (201)
@@ -23,6 +24,21 @@ GET    /v1/matches/{id}        → detail (participant, recorder, or accepted fr
 DELETE /v1/matches/{id}        → creator only (204)
 GET    /v1/users/{id}/matches  → a friend's history (403 unless self / accepted friend)
 ```
+
+## Live routes
+
+```
+POST   /v1/live-matches              → start; registered opponent → PENDING + invite, else IN_PROGRESS
+GET    /v1/live-matches              → open sessions, paginated
+GET    /v1/live-matches/{id}         → creator or registered participant
+PATCH  /v1/live-matches/{id}         → creator score snapshot
+POST   /v1/live-matches/{id}/end     → archive to history
+POST   /v1/live-matches/{id}/cancel
+POST   /v1/live-matches/{id}/accept  → addressee only
+POST   /v1/live-matches/{id}/decline
+```
+
+Friend vs friend: duplicate open live → 409. SSE `match.invite` / `match.started` / `match.score_updated`. FCM via `notify`.
 
 ## Match body
 
@@ -47,4 +63,4 @@ columns so they prune partitions and hit indexes.
 
 ## After changes
 
-`cd BeCourtScore && go test ./internal/modules/score/...` then `go test ./...` (15 tests must pass).
+`cd BeCourtScore && go test ./internal/modules/score/...` then `go test ./...`. Inventory: `BeCourtScore/test/test.md`.

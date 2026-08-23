@@ -1,7 +1,7 @@
 # Domain: tournament — brackets, draws, results
 
 > Focused notes for the `tournament` module. See `../../../CLAUDE.md` for the whole backend.
-> NOTE: the root doc still calls this a "stub" — it is **fully implemented**. Update the root when convenient.
+> NOTE: this domain is **fully implemented** (create/join/lock/draw/bracket/results + SSE).
 
 Single-elimination and round-robin tournaments: create, join by code, lock, draw,
 live bracket, and result entry with opponent confirmation. Live updates over SSE.
@@ -66,4 +66,4 @@ Valid sports: TENNIS, PADEL, SQUASH, PING_PONG. `max_participants` default 32, r
 
 ## After changes
 
-`cd BeCourtScore && go test ./internal/modules/tournament/...` then `go test ./...` (15 tests must pass).
+`cd BeCourtScore && go test ./internal/modules/tournament/...` then `go test ./...`. Inventory: `BeCourtScore/test/test.md`.

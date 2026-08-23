@@ -30,6 +30,7 @@ type userStore interface {
 	createUserWithIdentity(ctx context.Context, ext ExternalIdentity) (User, error)
 	getUserByID(ctx context.Context, id string) (User, error)
 	updateUser(ctx context.Context, id string, in UpdateInput) (User, error)
+	deleteUser(ctx context.Context, id string) error
 	saveRefreshToken(ctx context.Context, userID, hash string, expiresAt time.Time) error
 	consumeRefreshToken(ctx context.Context, hash string) (string, error)
 	revokeRefreshToken(ctx context.Context, hash string) error
@@ -144,6 +145,11 @@ func (s *Service) GetUser(ctx context.Context, userID string) (User, error) {
 // UpdateUser applies optional profile fields and returns the updated user.
 func (s *Service) UpdateUser(ctx context.Context, userID string, in UpdateInput) (User, error) {
 	return s.repo.updateUser(ctx, userID, in)
+}
+
+// DeleteUser permanently deletes the account and cascaded related data.
+func (s *Service) DeleteUser(ctx context.Context, userID string) error {
+	return s.repo.deleteUser(ctx, userID)
 }
 
 // issueSession mints an access token + refresh token and persists the hash.

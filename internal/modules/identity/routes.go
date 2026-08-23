@@ -22,6 +22,7 @@ func Mount(r chi.Router, svc svcFacade, hub *sse.Hub, authMW func(http.Handler) 
 		r.Post("/v1/auth/logout", h.logout)
 		r.Get("/v1/me", h.getMe)
 		r.Patch("/v1/me", h.patchMe)
+		r.Delete("/v1/me", h.deleteMe)
 	})
 
 	// SSE stream — also protected

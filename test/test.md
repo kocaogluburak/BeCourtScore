@@ -31,8 +31,8 @@ make test
 | `internal/modules/notify/handler_test.go` | device register + unregister |
 | `internal/modules/notify/service_test.go` | Register/Unregister validation + SendToUser fan-out |
 | `internal/modules/notify/fcm_test.go` | NewFCMSenderFromEnv → Noop when unset/bad path/invalid JSON |
-| `internal/modules/identity/handler_test.go` | me/patch + auth/refresh/logout |
-| `internal/modules/identity/service_test.go` | AuthWithProvider / Refresh / Revoke |
+| `internal/modules/identity/handler_test.go` | me/patch/delete + auth/refresh/logout |
+| `internal/modules/identity/service_test.go` | AuthWithProvider / Refresh / Revoke / DeleteUser |
 | `internal/modules/identity/google_test.go` | Google claims + unknown provider |
 | `internal/platform/authkit/jwt_test.go` | JWT issue/parse |
 | `internal/platform/authkit/middleware_test.go` | Bearer missing/invalid/valid → ctx |
@@ -56,6 +56,7 @@ make test
 | SOCIAL-03 | done | SendRequest FCM friend.request_received to addressee |
 | SOCIAL-04 | done | AcceptRequest FCM friend.request_accepted to requester |
 | ID-BE-01 | done | AuthWithProvider + Refresh + Revoke |
+| ID-BE-02 | done | DELETE /v1/me hard-delete account (handler + service) |
 
 ## Öncelik (2 haftalık)
 

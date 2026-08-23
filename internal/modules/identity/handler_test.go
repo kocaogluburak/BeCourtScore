@@ -21,6 +21,7 @@ type stubService struct {
 	user       User
 	getUserErr error
 	updateErr  error
+	deleteErr  error
 	session    Session
 	isNewUser  bool
 	authErr    error
@@ -64,6 +65,10 @@ func (s *stubService) UpdateUser(_ context.Context, _ string, in UpdateInput) (U
 		u.ProfileIcon = in.ProfileIcon
 	}
 	return u, nil
+}
+
+func (s *stubService) DeleteUser(_ context.Context, _ string) error {
+	return s.deleteErr
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -271,6 +276,61 @@ func TestPatchMe_Returns500OnUnexpectedError(t *testing.T) {
 	}
 }
 
+// ── DELETE /v1/me ────────────────────────────────────────────────────────────
+
+func TestDeleteMe_Returns204(t *testing.T) {
+	svc := &stubService{user: baseUser()}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.deleteMe(w, authedRequest(http.MethodDelete, "/v1/me", nil, "user-abc"))
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204", w.Code)
+	}
+}
+
+func TestDeleteMe_Returns404WhenNotFound(t *testing.T) {
+	svc := &stubService{deleteErr: ErrNotFound}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.deleteMe(w, authedRequest(http.MethodDelete, "/v1/me", nil, "missing-user"))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", w.Code)
+	}
+}
+
+func TestDeleteMe_Returns500OnUnexpectedError(t *testing.T) {
+	svc := &stubService{deleteErr: errors.New("db down")}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	w := httptest.NewRecorder()
+	h.deleteMe(w, authedRequest(http.MethodDelete, "/v1/me", nil, "user-abc"))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want 500", w.Code)
+	}
+}
+
+func TestDeleteMe_Returns401WithNoToken(t *testing.T) {
+	svc := &stubService{user: baseUser()}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+	srv := httptest.NewServer(buildRouter(h))
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/v1/me", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401", resp.StatusCode)
+	}
+}
+
 // ── Auth handlers (ID-BE-01) ──────────────────────────────────────────────────
 
 func TestAuthWithProvider_Returns200(t *testing.T) {
@@ -396,6 +456,8 @@ func buildRouter(h *handler) http.Handler {
 			h.getMe(w, r)
 		case "PATCH /v1/me":
 			h.patchMe(w, r)
+		case "DELETE /v1/me":
+			h.deleteMe(w, r)
 		}
 	})
 	mux.Handle("/v1/me", authMW(protected))

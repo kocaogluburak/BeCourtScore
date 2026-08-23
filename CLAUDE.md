@@ -13,6 +13,7 @@ data model, and gotchas for just that area, so you can focus without loading the
 | Matches + history | `internal/modules/score/CLAUDE.md` |
 | Friendships + user search | `internal/modules/social/CLAUDE.md` |
 | Tournaments (brackets/draws) | `internal/modules/tournament/CLAUDE.md` |
+| Push (FCM device tokens) | `internal/modules/notify/CLAUDE.md` |
 | Shared infra (authkit/sse/httpx/db/config) | `internal/platform/CLAUDE.md` |
 
 This root file stays the source of truth for cross-cutting concerns (deploy, env, CORS, pagination).
@@ -84,6 +85,21 @@ Match body: `sport` (TENNIS|PADEL|SQUASH|PING_PONG), `player_a_name`, `player_b_
 optional `player_a_user_id` / `player_b_user_id` (registered users; guests stay name-only),
 `sets_a`, `sets_b`, `winner_side` (A|B), optional `played_at` (RFC3339, defaults to now).
 
+### Live matches API (same score module, Bearer required)
+
+```
+POST   /v1/live-matches                 → start (201); friend opponent → PENDING + invite, else IN_PROGRESS
+GET    /v1/live-matches                 → open sessions for the user, paginated
+GET    /v1/live-matches/{id}            → creator or registered participant
+PATCH  /v1/live-matches/{id}            → scorer (creator) score snapshot
+POST   /v1/live-matches/{id}/end        → archive to history
+POST   /v1/live-matches/{id}/cancel
+POST   /v1/live-matches/{id}/accept     → addressee (PENDING → IN_PROGRESS)
+POST   /v1/live-matches/{id}/decline
+```
+
+SSE: `match.invite`, `match.started`, `match.score_updated`, plus end/cancel. FCM invite/accept via `notify`. Duplicate open live vs the same registered opponent → 409. Details: `internal/modules/score/CLAUDE.md`.
+
 ### Friends API (social module, Bearer required)
 
 ```
@@ -129,10 +145,11 @@ internal/
     authkit/             JWT + Bearer middleware
     sse/                 per-user SSE hub
   modules/
-    identity/            auth + profile (implemented)
-    score/               matches + history → /v1/matches/*, /v1/users/{id}/matches
-    social/              friendships + user search → /v1/friends/*, /v1/users/*
-    tournament/          stub → /v1/tournaments/*
+    identity/            auth + profile + SSE mount
+    score/               history `/v1/matches/*` + live `/v1/live-matches/*`
+    social/              friendships + user search → `/v1/friends/*`, `/v1/users/*`
+    tournament/          brackets/draws → `/v1/tournaments/*` (implemented)
+    notify/              FCM device tokens → `/v1/devices`
   migrate/               embedded SQL migrations
   httpapi/               chi router, CORS, mounts modules
 ```
