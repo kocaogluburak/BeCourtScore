@@ -2,8 +2,8 @@
 
 > Focused notes for the `identity` module. See `../../../CLAUDE.md` for the whole backend.
 
-Handles authentication (Google Sign-In today), JWT sessions, refresh-token rotation,
-the current-user profile (`/v1/me`), and mounts the SSE stream (`/v1/events`).
+Handles authentication (Google Sign-In + Sign in with Apple), JWT sessions, refresh-token
+rotation, the current-user profile (`/v1/me`), and mounts the SSE stream (`/v1/events`).
 
 ## Files
 
@@ -14,8 +14,9 @@ the current-user profile (`/v1/me`), and mounts the SSE stream (`/v1/events`).
 | `service.go` | Business logic: verify provider token, upsert user, issue/rotate tokens, delete account |
 | `provider.go` | `IdentityProvider` interface (`Verify(idToken) → external identity`) |
 | `google.go` | Google provider impl — verifies against `GOOGLE_CLIENT_IDS` |
+| `apple.go` | Apple provider impl — verifies Apple identity JWT (JWKS) against `APPLE_CLIENT_IDS` |
 | `repo.go` | Postgres: `users`, `auth_identities`, `refresh_tokens` |
-| `*_test.go` | `handler_test.go`, `google_test.go`, `service_test.go` |
+| `*_test.go` | `handler_test.go`, `google_test.go`, `apple_test.go`, `service_test.go` |
 
 ## Routes
 
@@ -47,6 +48,9 @@ GET    /v1/events            → per-user SSE stream (Bearer)
 ## Gotchas
 
 - JWT signing uses `platform/authkit`; secret from `JWT_SECRET`. Never log tokens.
+- Apple only returns the user's name in the first authorization response (not in the identity
+  token), so `apple.go` leaves GivenName/FamilyName empty; the user sets them later via `/v1/me`.
+  Apple emails may be private-relay addresses — match on `sub`, not email.
 - Refresh tokens are stored **hashed** — compare hashes, never plaintext.
 - SSE is owned here (hub handler mounted in `routes.go`) but the hub itself lives in `platform/sse`.
 

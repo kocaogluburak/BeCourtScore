@@ -34,6 +34,7 @@ make test
 | `internal/modules/identity/handler_test.go` | me/patch/delete + auth/refresh/logout |
 | `internal/modules/identity/service_test.go` | AuthWithProvider / Refresh / Revoke / DeleteUser |
 | `internal/modules/identity/google_test.go` | Google claims + unknown provider |
+| `internal/modules/identity/apple_test.go` | Apple claims + email_verified bool/string + audience + JWK decode |
 | `internal/platform/authkit/jwt_test.go` | JWT issue/parse |
 | `internal/platform/authkit/middleware_test.go` | Bearer missing/invalid/valid → ctx |
 | `internal/platform/sse/hub_test.go` | subscribe/publish |

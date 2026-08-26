@@ -53,6 +53,7 @@ func main() {
 		RefreshTokenTTL: cfg.RefreshTokenTTL,
 	})
 	identitySvc.RegisterProvider("google", identity.NewGoogleProvider(cfg.GoogleClientIDs))
+	identitySvc.RegisterProvider("apple", identity.NewAppleProvider(cfg.AppleClientIDs))
 
 	// Social (friendships) + push + score (history + live matches)
 	socialSvc := social.NewService(pool)

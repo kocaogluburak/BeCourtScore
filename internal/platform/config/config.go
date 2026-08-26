@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL     string
 	JWTSecret       []byte
 	GoogleClientIDs []string
+	AppleClientIDs  []string
 	CORSOrigins     []string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
@@ -22,6 +23,7 @@ func Load() Config {
 		DatabaseURL:     mustEnv("DATABASE_URL"),
 		JWTSecret:       []byte(mustEnv("JWT_SECRET")),
 		GoogleClientIDs: splitEnv("GOOGLE_CLIENT_IDS", ","),
+		AppleClientIDs:  splitEnv("APPLE_CLIENT_IDS", ","),
 		CORSOrigins:     splitEnvDefault("CORS_ORIGINS", ",", []string{"*"}),
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
