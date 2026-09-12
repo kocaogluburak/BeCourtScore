@@ -1,6 +1,6 @@
 // Package score contains match/score management.
 // Domain: finished match history + in-progress live shared scoreboards.
-// Routes: /v1/matches/*, /v1/live-matches/*, /v1/users/{userID}/matches
+// Routes: /v1/matches/*, /v1/live-matches/*, /v1/users/{userID}/matches|stats|h2h
 package score
 
 import (
@@ -21,6 +21,8 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 		r.Get("/v1/matches/{id}", h.getMatch)
 		r.Delete("/v1/matches/{id}", h.deleteMatch)
 		r.Get("/v1/users/{userID}/matches", h.listUserMatches)
+		r.Get("/v1/users/{userID}/stats", h.getUserStats)
+		r.Get("/v1/users/{userID}/h2h", h.getHeadToHead)
 
 		r.Post("/v1/live-matches", h.startLiveMatch)
 		r.Get("/v1/live-matches", h.listMyOpenLiveMatches)

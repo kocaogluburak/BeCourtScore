@@ -31,6 +31,8 @@ type store interface {
 	listForUser(ctx context.Context, userID string, f ListFilter, limit, offset int) ([]Match, int64, error)
 	getByID(ctx context.Context, id string) (Match, error)
 	deleteByID(ctx context.Context, id, createdBy string) error
+	listParticipantMatches(ctx context.Context, userID, sport string) ([]Match, error)
+	listH2HMatches(ctx context.Context, userA, userB, sport string) ([]Match, error)
 	insertLive(ctx context.Context, createdBy string, in LiveStartInput) (LiveMatch, error)
 	getLiveByID(ctx context.Context, id string) (LiveMatch, error)
 	hasOpenLiveBetween(ctx context.Context, creatorID, opponentID string) (bool, error)
@@ -138,6 +140,57 @@ func (s *Service) GetMatch(ctx context.Context, viewerID, matchID string) (Match
 // DeleteMatch removes a match; only its creator may delete it.
 func (s *Service) DeleteMatch(ctx context.Context, userID, matchID string) error {
 	return s.repo.deleteByID(ctx, matchID, userID)
+}
+
+// requireSelfOrFriend allows viewing target stats/history for self or accepted friends.
+func (s *Service) requireSelfOrFriend(ctx context.Context, viewerID, targetID string) error {
+	if viewerID == targetID {
+		return nil
+	}
+	ok, err := s.friends.AreFriends(ctx, viewerID, targetID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// GetUserStats returns career W/L, set differential, form, and top rivals.
+// Only matches where targetID is a registered participant are counted.
+// Allowed for self or an accepted friend of the target.
+func (s *Service) GetUserStats(ctx context.Context, viewerID, targetID, sport string) (UserStats, error) {
+	if sport != "" && !validSports[sport] {
+		return UserStats{}, fmt.Errorf("%w: unknown sport %q", ErrInvalid, sport)
+	}
+	if err := s.requireSelfOrFriend(ctx, viewerID, targetID); err != nil {
+		return UserStats{}, err
+	}
+	matches, err := s.repo.listParticipantMatches(ctx, targetID, "")
+	if err != nil {
+		return UserStats{}, err
+	}
+	return aggregateUserStats(targetID, sport, matches), nil
+}
+
+// GetHeadToHead returns viewer-vs-target stats from the viewer's perspective.
+// targetID must not be the viewer. Allowed when viewer is friends with target.
+func (s *Service) GetHeadToHead(ctx context.Context, viewerID, targetID, sport string) (HeadToHead, error) {
+	if viewerID == targetID {
+		return HeadToHead{}, fmt.Errorf("%w: cannot compute head-to-head against yourself", ErrInvalid)
+	}
+	if sport != "" && !validSports[sport] {
+		return HeadToHead{}, fmt.Errorf("%w: unknown sport %q", ErrInvalid, sport)
+	}
+	if err := s.requireSelfOrFriend(ctx, viewerID, targetID); err != nil {
+		return HeadToHead{}, err
+	}
+	matches, err := s.repo.listH2HMatches(ctx, viewerID, targetID, sport)
+	if err != nil {
+		return HeadToHead{}, err
+	}
+	return aggregateHeadToHead(viewerID, targetID, sport, matches), nil
 }
 
 // StartLiveMatch creates a live session. Registered opponents require friendship

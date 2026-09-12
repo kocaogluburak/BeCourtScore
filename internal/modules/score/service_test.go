@@ -72,6 +72,38 @@ func (f *fakeScoreStore) getByID(context.Context, string) (Match, error) {
 
 func (f *fakeScoreStore) deleteByID(context.Context, string, string) error { return nil }
 
+func (f *fakeScoreStore) listParticipantMatches(_ context.Context, userID, sport string) ([]Match, error) {
+	out := []Match{}
+	for _, m := range f.matches {
+		if sport != "" && m.Sport != sport {
+			continue
+		}
+		if (m.PlayerAUserID != nil && *m.PlayerAUserID == userID) ||
+			(m.PlayerBUserID != nil && *m.PlayerBUserID == userID) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeScoreStore) listH2HMatches(_ context.Context, userA, userB, sport string) ([]Match, error) {
+	out := []Match{}
+	for _, m := range f.matches {
+		if sport != "" && m.Sport != sport {
+			continue
+		}
+		a, b := m.PlayerAUserID, m.PlayerBUserID
+		if a == nil || b == nil {
+			continue
+		}
+		pair := (*a == userA && *b == userB) || (*a == userB && *b == userA)
+		if pair {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeScoreStore) insertLive(_ context.Context, createdBy string, in LiveStartInput) (LiveMatch, error) {
 	if f.liveErr != nil {
 		return LiveMatch{}, f.liveErr
@@ -411,5 +443,53 @@ func TestCreateMatch_RejectsBadSetScores(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetUserStats_SelfAndFriendGate(t *testing.T) {
+	me, opp := "u1", "u2"
+	store := &fakeScoreStore{matches: []Match{
+		{Sport: "TENNIS", PlayerAUserID: &me, PlayerBUserID: &opp,
+			PlayerAName: "Me", PlayerBName: "Opp", SetsA: 2, SetsB: 0, WinnerSide: "A",
+			PlayedAt: time.Now()},
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: false}, nil)
+
+	got, err := svc.GetUserStats(context.Background(), me, me, "")
+	if err != nil || got.Matches != 1 || got.Wins != 1 {
+		t.Fatalf("self stats=%+v err=%v", got, err)
+	}
+
+	_, err = svc.GetUserStats(context.Background(), "stranger", me, "")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stranger err=%v", err)
+	}
+
+	svc = newScoreService(store, &fakeFriends{ok: true}, nil)
+	got, err = svc.GetUserStats(context.Background(), "friend", me, "TENNIS")
+	if err != nil || got.Matches != 1 {
+		t.Fatalf("friend stats=%+v err=%v", got, err)
+	}
+}
+
+func TestGetHeadToHead_SelfRejectedAndEmptyOK(t *testing.T) {
+	me, opp := "u1", "u2"
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+
+	_, err := svc.GetHeadToHead(context.Background(), me, me, "")
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("self h2h err=%v", err)
+	}
+
+	got, err := svc.GetHeadToHead(context.Background(), me, opp, "")
+	if err != nil || got.Matches != 0 || got.OpponentUserID != opp {
+		t.Fatalf("empty h2h=%+v err=%v", got, err)
+	}
+
+	svc = newScoreService(store, &fakeFriends{ok: false}, nil)
+	_, err = svc.GetHeadToHead(context.Background(), me, opp, "")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-friend err=%v", err)
 	}
 }

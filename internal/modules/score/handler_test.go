@@ -20,11 +20,15 @@ type stubService struct {
 	live      LiveMatch
 	matches   []Match
 	total     int64
+	stats     UserStats
+	h2h       HeadToHead
 	createErr error
 	listErr   error
 	getErr    error
 	deleteErr error
 	liveErr   error
+	statsErr  error
+	h2hErr    error
 
 	gotLimit  int
 	gotOffset int
@@ -121,6 +125,20 @@ func (s *stubService) DeclineLiveMatch(_ context.Context, _, _ string) (LiveMatc
 	m := s.live
 	m.Status = "ENDED"
 	return m, nil
+}
+
+func (s *stubService) GetUserStats(_ context.Context, _, _, _ string) (UserStats, error) {
+	if s.statsErr != nil {
+		return UserStats{}, s.statsErr
+	}
+	return s.stats, nil
+}
+
+func (s *stubService) GetHeadToHead(_ context.Context, _, _, _ string) (HeadToHead, error) {
+	if s.h2hErr != nil {
+		return HeadToHead{}, s.h2hErr
+	}
+	return s.h2h, nil
 }
 
 func authedRequest(method, target string, body []byte, userID string) *http.Request {
@@ -269,5 +287,100 @@ func TestDeleteMatch_Returns404WhenNotOwnerOrMissing(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404", w.Code)
+	}
+}
+
+// ── GET /v1/users/{userID}/stats ─────────────────────────────────────────────
+
+func TestGetUserStats_Returns200(t *testing.T) {
+	svc := &stubService{stats: UserStats{
+		UserID: "user-abc", Matches: 2, Wins: 1, Losses: 1,
+		Form: []string{"W", "L"}, Rivals: []RivalSummary{}, BySport: []SportStats{},
+	}}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getUserStats(w, authedRequest(http.MethodGet, "/v1/users/user-abc/stats", nil, "user-abc"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got UserStats
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Matches != 2 || got.Wins != 1 || len(got.Form) != 2 {
+		t.Errorf("stats: %+v", got)
+	}
+}
+
+func TestGetUserStats_Returns403WhenNotFriends(t *testing.T) {
+	svc := &stubService{statsErr: ErrForbidden}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getUserStats(w, authedRequest(http.MethodGet, "/v1/users/other/stats", nil, "user-abc"))
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want 403", w.Code)
+	}
+}
+
+func TestGetUserStats_Returns400OnBadSport(t *testing.T) {
+	svc := &stubService{statsErr: ErrInvalid}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getUserStats(w, authedRequest(http.MethodGet, "/v1/users/user-abc/stats?sport=CHESS", nil, "user-abc"))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
+	}
+}
+
+// ── GET /v1/users/{userID}/h2h ───────────────────────────────────────────────
+
+func TestGetHeadToHead_Returns200Empty(t *testing.T) {
+	svc := &stubService{h2h: HeadToHead{
+		OpponentUserID: "other", Form: []string{},
+	}}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getHeadToHead(w, authedRequest(http.MethodGet, "/v1/users/other/h2h", nil, "user-abc"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got HeadToHead
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.OpponentUserID != "other" || got.Matches != 0 {
+		t.Errorf("h2h: %+v", got)
+	}
+}
+
+func TestGetHeadToHead_Returns400AgainstSelf(t *testing.T) {
+	svc := &stubService{h2hErr: ErrInvalid}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getHeadToHead(w, authedRequest(http.MethodGet, "/v1/users/user-abc/h2h", nil, "user-abc"))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", w.Code)
+	}
+}
+
+func TestGetHeadToHead_Returns403WhenNotFriends(t *testing.T) {
+	svc := &stubService{h2hErr: ErrForbidden}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getHeadToHead(w, authedRequest(http.MethodGet, "/v1/users/stranger/h2h", nil, "user-abc"))
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want 403", w.Code)
 	}
 }

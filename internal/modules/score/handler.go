@@ -18,6 +18,8 @@ type svcFacade interface {
 	ListUserMatches(ctx context.Context, viewerID, targetID string, f ListFilter, limit, offset int) ([]Match, int64, error)
 	GetMatch(ctx context.Context, viewerID, matchID string) (Match, error)
 	DeleteMatch(ctx context.Context, userID, matchID string) error
+	GetUserStats(ctx context.Context, viewerID, targetID, sport string) (UserStats, error)
+	GetHeadToHead(ctx context.Context, viewerID, targetID, sport string) (HeadToHead, error)
 	StartLiveMatch(ctx context.Context, userID string, in LiveStartInput) (LiveMatch, error)
 	GetLiveMatch(ctx context.Context, viewerID, id string) (LiveMatch, error)
 	UpdateLiveMatch(ctx context.Context, userID, id string, u LiveScoreUpdate) (LiveMatch, error)
@@ -154,4 +156,48 @@ func (h *handler) deleteMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- GET /v1/users/{userID}/stats ---
+
+func (h *handler) getUserStats(w http.ResponseWriter, r *http.Request) {
+	viewerID, _ := authkit.UserIDFromCtx(r.Context())
+	targetID := r.PathValue("userID")
+	sport := r.URL.Query().Get("sport")
+
+	stats, err := h.svc.GetUserStats(r.Context(), viewerID, targetID, sport)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "not friends with this user")
+		case errors.Is(err, ErrInvalid):
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			httpx.Error(w, http.StatusInternalServerError, "failed to get stats")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, stats)
+}
+
+// --- GET /v1/users/{userID}/h2h ---
+
+func (h *handler) getHeadToHead(w http.ResponseWriter, r *http.Request) {
+	viewerID, _ := authkit.UserIDFromCtx(r.Context())
+	targetID := r.PathValue("userID")
+	sport := r.URL.Query().Get("sport")
+
+	h2h, err := h.svc.GetHeadToHead(r.Context(), viewerID, targetID, sport)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "not friends with this user")
+		case errors.Is(err, ErrInvalid):
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		default:
+			httpx.Error(w, http.StatusInternalServerError, "failed to get head-to-head")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, h2h)
 }

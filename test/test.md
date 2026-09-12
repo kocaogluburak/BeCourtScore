@@ -25,9 +25,10 @@ make test
 | `internal/modules/tournament/*_test.go` | lifecycle, bracket, routes, handlers |
 | `internal/modules/social/handler_test.go` | search, profile, send/accept/reject/list/unfriend |
 | `internal/modules/social/service_test.go` | request state machine, reopen-after-reject, AreFriends, profile status |
-| `internal/modules/score/handler_test.go` | match CRUD + friendship gate |
+| `internal/modules/score/handler_test.go` | match CRUD + friendship gate + stats/h2h handlers |
 | `internal/modules/score/live_handler_test.go` | live match start/get/update/end/list/cancel/accept/decline + conflict |
-| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, duplicate open 409, accept/decline, participant list, push invite |
+| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, duplicate open 409, accept/decline, participant list, push invite, stats/h2h gates |
+| `internal/modules/score/stats_test.go` | W/L form, rivals, sport filter, recorder-only ignored, H2H viewer perspective |
 | `internal/modules/notify/handler_test.go` | device register + unregister |
 | `internal/modules/notify/service_test.go` | Register/Unregister validation + SendToUser fan-out |
 | `internal/modules/notify/fcm_test.go` | NewFCMSenderFromEnv → Noop when unset/bad path/invalid JSON |
@@ -52,6 +53,8 @@ make test
 | LIVE-03 | done | friend start → PENDING + match.invite; guest → IN_PROGRESS |
 | LIVE-04 | done | accept/decline; list includes opponent; duplicate open → 409 |
 | HIST-01 | done | create match persists set_scores; invalid lines rejected |
+| STATS-01 | done | user stats self/friend gate; form + rivals aggregation; recorder-only ignored |
+| H2H-01 | done | h2h self → 400; friend gate; empty 200; viewer-perspective W/L |
 | PUSH-01 | done | register + unregister device token |
 | SOCIAL-01…02 | done | list/accept/reject/unfriend handler + service |
 | SOCIAL-03 | done | SendRequest FCM friend.request_received to addressee |

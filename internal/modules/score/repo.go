@@ -188,6 +188,62 @@ func (r *repo) deleteByID(ctx context.Context, id, createdBy string) error {
 	return nil
 }
 
+// listParticipantMatches returns finished matches where userID is a registered
+// player (not recorder-only), newest first. Empty sport = all sports.
+func (r *repo) listParticipantMatches(ctx context.Context, userID, sport string) ([]Match, error) {
+	union := `
+		SELECT ` + matchCols + ` FROM matches WHERE player_a_user_id = $1
+		UNION
+		SELECT ` + matchCols + ` FROM matches WHERE player_b_user_id = $1`
+	args := []any{userID}
+	filter := ""
+	if sport != "" {
+		args = append(args, sport)
+		filter = fmt.Sprintf(" AND sport = $%d", len(args))
+	}
+	q := fmt.Sprintf(
+		`SELECT %s FROM (%s) m WHERE TRUE%s ORDER BY played_at DESC`,
+		matchCols, union, filter)
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list participant matches: %w", err)
+	}
+	defer rows.Close()
+	return scanMatchRows(rows)
+}
+
+// listH2HMatches returns matches where both userA and userB are registered players,
+// newest first. Empty sport = all sports.
+func (r *repo) listH2HMatches(ctx context.Context, userA, userB, sport string) ([]Match, error) {
+	args := []any{userA, userB}
+	filter := `
+		WHERE ((player_a_user_id = $1 AND player_b_user_id = $2)
+		    OR (player_a_user_id = $2 AND player_b_user_id = $1))`
+	if sport != "" {
+		args = append(args, sport)
+		filter += fmt.Sprintf(" AND sport = $%d", len(args))
+	}
+	q := fmt.Sprintf(`SELECT %s FROM matches %s ORDER BY played_at DESC`, matchCols, filter)
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list h2h matches: %w", err)
+	}
+	defer rows.Close()
+	return scanMatchRows(rows)
+}
+
+func scanMatchRows(rows pgx.Rows) ([]Match, error) {
+	matches := []Match{}
+	for rows.Next() {
+		m, err := scanMatch(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan match: %w", err)
+		}
+		matches = append(matches, m)
+	}
+	return matches, rows.Err()
+}
+
 // Sentinel errors.
 var (
 	ErrNotFound  = errors.New("not found")

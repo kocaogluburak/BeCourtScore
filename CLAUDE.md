@@ -79,11 +79,15 @@ GET    /v1/matches               → own history, paginated; ?q= name search, ?s
 GET    /v1/matches/{id}          → detail (participant, recorder, or their accepted friend)
 DELETE /v1/matches/{id}          → only the creator (204)
 GET    /v1/users/{id}/matches    → a friend's history (403 unless self/accepted friend)
+GET    /v1/users/{id}/stats      → career W/L + form + rivals (?sport=; self/friend)
+GET    /v1/users/{id}/h2h        → viewer vs target H2H (?sport=; self → 400)
 ```
 
 Match body: `sport` (TENNIS|PADEL|SQUASH|PING_PONG), `player_a_name`, `player_b_name`,
 optional `player_a_user_id` / `player_b_user_id` (registered users; guests stay name-only),
 `sets_a`, `sets_b`, `winner_side` (A|B), optional `played_at` (RFC3339, defaults to now).
+
+Stats count only registered participants (not recorder-only). See `internal/modules/score/CLAUDE.md`.
 
 ### Live matches API (same score module, Bearer required)
 
