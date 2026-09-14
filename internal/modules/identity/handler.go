@@ -5,7 +5,10 @@ import (
 	"errors"
 	"net/http"
 
+	"log/slog"
+
 	"courtscore/internal/platform/authkit"
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/httpx"
 	"courtscore/internal/platform/sse"
 )
@@ -22,8 +25,22 @@ type svcFacade interface {
 }
 
 type handler struct {
-	svc svcFacade
-	hub *sse.Hub
+	svc          svcFacade
+	hub          *sse.Hub
+	entitlements entitlement.Loader
+}
+
+func (h *handler) withEntitlement(ctx context.Context, user User) User {
+	if h.entitlements == nil || user.ID == "" {
+		return user
+	}
+	snap, err := h.entitlements.Load(ctx, user.ID)
+	if err != nil {
+		slog.Warn("identity: entitlement load failed", "user_id", user.ID, "err", err)
+		return user
+	}
+	user.Entitlement = &snap
+	return user
 }
 
 // --- auth: POST /v1/auth/{provider} ---
@@ -50,7 +67,7 @@ func (h *handler) authWithProvider(w http.ResponseWriter, r *http.Request) {
 		"refresh_token": session.RefreshToken,
 		"expires_in":    session.ExpiresIn,
 		"is_new_user":   isNewUser,
-		"user":          user,
+		"user":          h.withEntitlement(r.Context(), user),
 	})
 }
 
@@ -79,7 +96,7 @@ func (h *handler) refresh(w http.ResponseWriter, r *http.Request) {
 		"access_token":  session.AccessToken,
 		"refresh_token": session.RefreshToken,
 		"expires_in":    session.ExpiresIn,
-		"user":          user,
+		"user":          h.withEntitlement(r.Context(), user),
 	})
 }
 
@@ -115,7 +132,7 @@ func (h *handler) getMe(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "failed to get user")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, user)
+	httpx.JSON(w, http.StatusOK, h.withEntitlement(r.Context(), user))
 }
 
 // --- profile: PATCH /v1/me ---
@@ -153,6 +170,7 @@ func (h *handler) patchMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user = h.withEntitlement(r.Context(), user)
 	if h.hub != nil {
 		h.hub.Publish(userID, sse.Event{Type: "user.updated", Data: user})
 	}

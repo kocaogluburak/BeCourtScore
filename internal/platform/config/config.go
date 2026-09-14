@@ -15,6 +15,8 @@ type Config struct {
 	CORSOrigins     []string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+	PublicWebOrigin string
+	PlayPackageName string
 }
 
 func Load() Config {
@@ -27,6 +29,8 @@ func Load() Config {
 		CORSOrigins:     splitEnvDefault("CORS_ORIGINS", ",", []string{"*"}),
 		AccessTokenTTL:  15 * time.Minute,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
+		PublicWebOrigin: getEnv("PUBLIC_WEB_ORIGIN", "https://court-score.com"),
+		PlayPackageName: getEnv("PLAY_PACKAGE_NAME", "com.court.score"),
 	}
 }
 

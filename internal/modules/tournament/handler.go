@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"courtscore/internal/platform/authkit"
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/httpx"
 )
 
@@ -49,6 +50,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusConflict, "tournament full")
 	case errors.Is(err, ErrAlreadyJoined):
 		httpx.Error(w, http.StatusConflict, "already joined")
+	case errors.Is(err, entitlement.ErrProRequired):
+		httpx.ProRequired(w)
 	default:
 		// Unmapped errors are real failures (usually DB/query issues); log the
 		// underlying cause so it is visible in server logs, not just a bare 500.

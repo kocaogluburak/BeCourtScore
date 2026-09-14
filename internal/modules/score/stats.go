@@ -40,15 +40,15 @@ type RivalSummary struct {
 
 // HeadToHead is viewer-vs-opponent career summary (viewer perspective).
 type HeadToHead struct {
-	OpponentUserID string    `json:"opponent_user_id"`
-	Sport          *string   `json:"sport"`
-	Matches        int       `json:"matches"`
-	Wins           int       `json:"wins"`
-	Losses         int       `json:"losses"`
-	SetsFor        int       `json:"sets_for"`
-	SetsAgainst    int       `json:"sets_against"`
-	SetDiff        int       `json:"set_diff"`
-	Form           []string  `json:"form"`
+	OpponentUserID string     `json:"opponent_user_id"`
+	Sport          *string    `json:"sport"`
+	Matches        int        `json:"matches"`
+	Wins           int        `json:"wins"`
+	Losses         int        `json:"losses"`
+	SetsFor        int        `json:"sets_for"`
+	SetsAgainst    int        `json:"sets_against"`
+	SetDiff        int        `json:"set_diff"`
+	Form           []string   `json:"form"`
 	LastPlayedAt   *time.Time `json:"last_played_at"`
 }
 

@@ -30,6 +30,8 @@ type LiveMatch struct {
 	WinnerSide       *string    `json:"winner_side"`
 	CreatedBy        string     `json:"created_by"`
 	HistoryMatchID   *string    `json:"history_match_id"`
+	ShareToken       *string    `json:"share_token,omitempty"`
+	Archived         bool       `json:"archived"`
 	StartedAt        time.Time  `json:"started_at"`
 	EndedAt          *time.Time `json:"ended_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
@@ -72,7 +74,7 @@ type LiveEndInput struct {
 
 const liveCols = `id, sport, status, player_a_name, player_b_name, player_a_user_id, player_b_user_id,
 	sets_a, sets_b, games_a, games_b, score_a, score_b, is_tie_break, sets_to_win, advantage_enabled,
-	points_to_win, winner_side, created_by, history_match_id, started_at, ended_at, updated_at`
+	points_to_win, winner_side, created_by, history_match_id, share_token, started_at, ended_at, updated_at`
 
 const openLiveStatuses = `status IN ('PENDING', 'IN_PROGRESS')`
 
@@ -82,8 +84,9 @@ func scanLive(row pgx.Row) (LiveMatch, error) {
 		&m.ID, &m.Sport, &m.Status, &m.PlayerAName, &m.PlayerBName, &m.PlayerAUserID, &m.PlayerBUserID,
 		&m.SetsA, &m.SetsB, &m.GamesA, &m.GamesB, &m.ScoreA, &m.ScoreB, &m.IsTieBreak, &m.SetsToWin,
 		&m.AdvantageEnabled, &m.PointsToWin, &m.WinnerSide, &m.CreatedBy, &m.HistoryMatchID,
-		&m.StartedAt, &m.EndedAt, &m.UpdatedAt,
+		&m.ShareToken, &m.StartedAt, &m.EndedAt, &m.UpdatedAt,
 	)
+	m.Archived = m.HistoryMatchID != nil
 	return m, err
 }
 
@@ -265,6 +268,26 @@ func (r *repo) listOpenLiveForParticipant(ctx context.Context, userID string, li
 		out = append(out, m)
 	}
 	return out, total, rows.Err()
+}
+
+func (r *repo) setShareToken(ctx context.Context, id, token string) (LiveMatch, error) {
+	m, err := scanLive(r.pool.QueryRow(ctx, `
+		UPDATE live_matches SET share_token = $2, updated_at = NOW()
+		WHERE id = $1
+		RETURNING `+liveCols, id, token))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LiveMatch{}, ErrNotFound
+	}
+	return m, err
+}
+
+func (r *repo) getLiveByShareToken(ctx context.Context, token string) (LiveMatch, error) {
+	m, err := scanLive(r.pool.QueryRow(ctx,
+		`SELECT `+liveCols+` FROM live_matches WHERE share_token = $1`, token))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LiveMatch{}, ErrNotFound
+	}
+	return m, err
 }
 
 // ErrWrongState is returned when a live match is not in the expected status.

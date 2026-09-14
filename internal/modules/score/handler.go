@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"courtscore/internal/platform/authkit"
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/httpx"
 )
 
@@ -28,6 +29,8 @@ type svcFacade interface {
 	CancelLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error)
 	AcceptLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error)
 	DeclineLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error)
+	ShareLiveMatch(ctx context.Context, userID, id string) (token, url string, err error)
+	GetLiveByShareToken(ctx context.Context, token string) (LiveMatch, error)
 }
 
 type handler struct {
@@ -71,6 +74,10 @@ func (h *handler) createMatch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrInvalid) {
 			httpx.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, entitlement.ErrProRequired) {
+			httpx.ProRequired(w)
 			return
 		}
 		httpx.Error(w, http.StatusInternalServerError, "failed to save match")
@@ -172,6 +179,8 @@ func (h *handler) getUserStats(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusForbidden, "not friends with this user")
 		case errors.Is(err, ErrInvalid):
 			httpx.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, entitlement.ErrProRequired):
+			httpx.ProRequired(w)
 		default:
 			httpx.Error(w, http.StatusInternalServerError, "failed to get stats")
 		}
@@ -194,6 +203,8 @@ func (h *handler) getHeadToHead(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusForbidden, "not friends with this user")
 		case errors.Is(err, ErrInvalid):
 			httpx.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, entitlement.ErrProRequired):
+			httpx.ProRequired(w)
 		default:
 			httpx.Error(w, http.StatusInternalServerError, "failed to get head-to-head")
 		}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"courtscore/internal/platform/authkit"
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/httpx"
 )
 
@@ -141,6 +142,17 @@ func (s *stubService) GetHeadToHead(_ context.Context, _, _, _ string) (HeadToHe
 	return s.h2h, nil
 }
 
+func (s *stubService) ShareLiveMatch(_ context.Context, _, _ string) (string, string, error) {
+	if s.liveErr != nil {
+		return "", "", s.liveErr
+	}
+	return "tok", "https://court-score.com/live/s/tok", nil
+}
+
+func (s *stubService) GetLiveByShareToken(_ context.Context, _ string) (LiveMatch, error) {
+	return s.live, s.liveErr
+}
+
 func authedRequest(method, target string, body []byte, userID string) *http.Request {
 	var r *http.Request
 	if body != nil {
@@ -197,6 +209,20 @@ func TestCreateMatch_Returns400OnInvalidInput(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400", w.Code)
+	}
+}
+
+func TestCreateMatch_Returns402OnProRequired(t *testing.T) {
+	svc := &stubService{createErr: entitlement.ErrProRequired}
+	h := &handler{svc: svc}
+	body, _ := json.Marshal(map[string]any{
+		"sport": "TENNIS", "player_a_name": "Ada", "player_b_name": "Grace",
+		"sets_a": 2, "sets_b": 1, "winner_side": "A",
+	})
+	w := httptest.NewRecorder()
+	h.createMatch(w, authedRequest(http.MethodPost, "/v1/matches", body, "user-abc"))
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("status: got %d, want 402", w.Code)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/sse"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,12 +59,15 @@ type store interface {
 type Service struct {
 	store store
 	hub   *sse.Hub
+	gate  entitlement.Gate
 }
 
 // NewService wires the Service to Postgres and the SSE hub.
 func NewService(pool *pgxpool.Pool, hub *sse.Hub) *Service {
 	return &Service{store: &repo{pool: pool}, hub: hub}
 }
+
+func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }
 
 // ── View types ───────────────────────────────────────────────────────────────
 
@@ -124,10 +128,24 @@ func (s *Service) CreateTournament(ctx context.Context, userID string, in Create
 		return Tournament{}, fmt.Errorf("%w: unknown format %q", ErrInvalid, in.Format)
 	}
 	if in.MaxParticipants == 0 {
-		in.MaxParticipants = 32
+		in.MaxParticipants = entitlement.DefaultMaxParticipants
+		if s.gate != nil {
+			max, err := s.gate.MaxParticipants(ctx, userID)
+			if err != nil {
+				return Tournament{}, err
+			}
+			if max < in.MaxParticipants {
+				in.MaxParticipants = max
+			}
+		}
 	}
-	if in.MaxParticipants < 2 || in.MaxParticipants > 128 {
+	if in.MaxParticipants < 2 || in.MaxParticipants > entitlement.ProMaxParticipants {
 		return Tournament{}, fmt.Errorf("%w: max_participants must be 2..128", ErrInvalid)
+	}
+	if s.gate != nil {
+		if err := s.gate.AllowLargeTournament(ctx, userID, in.MaxParticipants); err != nil {
+			return Tournament{}, err
+		}
 	}
 	if in.SetsToWin <= 0 {
 		in.SetsToWin = 1

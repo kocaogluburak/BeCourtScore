@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"courtscore/internal/platform/entitlement"
 )
 
 // ── fake store ───────────────────────────────────────────────────────────────
@@ -110,6 +112,22 @@ func (f *fakeStore) participantUserIDs(context.Context, string) ([]string, error
 }
 
 func newService(f *fakeStore) *Service { return &Service{store: f, hub: nil} }
+
+type fakeTourGate struct {
+	err error
+	max int
+}
+
+func (g *fakeTourGate) AllowCloudSync(context.Context, string) error            { return nil }
+func (g *fakeTourGate) AllowStats(context.Context, string) error                { return nil }
+func (g *fakeTourGate) AllowPublicLive(context.Context, string) error           { return nil }
+func (g *fakeTourGate) AllowLargeTournament(context.Context, string, int) error { return g.err }
+func (g *fakeTourGate) MaxParticipants(context.Context, string) (int, error) {
+	if g.max == 0 {
+		return 8, nil
+	}
+	return g.max, nil
+}
 
 func strptr(s string) *string { return &s }
 
@@ -498,4 +516,27 @@ func TestMakeSlug_TurkishAndUnique(t *testing.T) {
 	if s1 == makeSlug("35 Yaş Üstü Padel") {
 		t.Errorf("slugs should differ by random suffix")
 	}
+}
+
+func TestCreateTournament_LargeDrawProRequired(t *testing.T) {
+	svc := newService(&fakeStore{tournament: regTournament()})
+	svc.SetGate(&fakeTourGate{err: entitlement.ErrProRequired, max: 8})
+	_, err := svc.CreateTournament(context.Background(), "org", CreateInput{
+		Name: "Big", Sport: "PADEL", Format: "SINGLE_ELIM", MaxParticipants: 16,
+	})
+	if !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCreateTournament_DefaultCapsWhenOverQuota(t *testing.T) {
+	svc := newService(&fakeStore{tournament: regTournament()})
+	svc.SetGate(&fakeTourGate{max: 8})
+	got, err := svc.CreateTournament(context.Background(), "org", CreateInput{
+		Name: "Club", Sport: "PADEL", Format: "SINGLE_ELIM",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = got
 }

@@ -3,14 +3,15 @@ package identity
 import (
 	"net/http"
 
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/sse"
 	"github.com/go-chi/chi/v5"
 )
 
 // Mount registers all identity routes onto the provided router.
 // authMW is the Bearer-JWT middleware; hub is used to push user.updated events.
-func Mount(r chi.Router, svc svcFacade, hub *sse.Hub, authMW func(http.Handler) http.Handler) {
-	h := &handler{svc: svc, hub: hub}
+func Mount(r chi.Router, svc svcFacade, hub *sse.Hub, authMW func(http.Handler) http.Handler, entitlements entitlement.Loader) {
+	h := &handler{svc: svc, hub: hub, entitlements: entitlements}
 
 	// Public auth routes
 	r.Post("/v1/auth/{provider}", h.authWithProvider)

@@ -13,6 +13,7 @@ data model, and gotchas for just that area, so you can focus without loading the
 | Matches + history | `internal/modules/score/CLAUDE.md` |
 | Friendships + user search | `internal/modules/social/CLAUDE.md` |
 | Tournaments (brackets/draws) | `internal/modules/tournament/CLAUDE.md` |
+| Pro billing / entitlements | `internal/modules/billing/CLAUDE.md` |
 | Push (FCM device tokens) | `internal/modules/notify/CLAUDE.md` |
 | Shared infra (authkit/sse/httpx/db/config) | `internal/platform/CLAUDE.md` |
 

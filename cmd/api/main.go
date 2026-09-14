@@ -11,6 +11,7 @@ import (
 
 	"courtscore/internal/httpapi"
 	"courtscore/internal/migrate"
+	"courtscore/internal/modules/billing"
 	"courtscore/internal/modules/identity"
 	"courtscore/internal/modules/notify"
 	"courtscore/internal/modules/score"
@@ -58,15 +59,17 @@ func main() {
 	// Social (friendships) + push + score (history + live matches)
 	socialSvc := social.NewService(pool)
 	notifySvc := notify.NewService(pool, notify.NewFCMSenderFromEnv())
+	billingSvc := billing.NewService(pool, billing.NewVerifierFromEnv(), nil)
 	scoreSvc := score.NewService(pool, socialSvc, hub, notifySvc)
+	scoreSvc.SetGate(billingSvc)
+	scoreSvc.SetPublicWebOrigin(cfg.PublicWebOrigin)
 
-	// Tournament (brackets, round-robin, live bracket events)
 	tournamentSvc := tournament.NewService(pool, hub)
+	tournamentSvc.SetGate(billingSvc)
 
-	// HTTP server
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      httpapi.New(cfg, identitySvc, scoreSvc, socialSvc, tournamentSvc, notifySvc, hub),
+		Handler:      httpapi.New(cfg, identitySvc, scoreSvc, socialSvc, tournamentSvc, notifySvc, billingSvc, hub),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 0, // SSE connections stream indefinitely
 		IdleTimeout:  60 * time.Second,

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"courtscore/internal/modules/billing"
 	"courtscore/internal/modules/identity"
 	"courtscore/internal/modules/notify"
 	"courtscore/internal/modules/score"
@@ -25,6 +26,7 @@ func New(
 	socialSvc *social.Service,
 	tournamentSvc *tournament.Service,
 	notifySvc *notify.Service,
+	billingSvc *billing.Service,
 	hub *sse.Hub,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -42,11 +44,14 @@ func New(
 
 	authMW := authkit.Middleware(cfg.JWTSecret)
 
-	identity.Mount(r, identitySvc, hub, authMW)
+	identity.Mount(r, identitySvc, hub, authMW, billingSvc)
 	score.Mount(r, scoreSvc, authMW)
 	social.Mount(r, socialSvc, hub, notifySvc, authMW)
 	tournament.Mount(r, tournamentSvc, authMW)
 	notify.Mount(r, notifySvc, authMW)
+	if billingSvc != nil {
+		billing.Mount(r, billingSvc, authMW)
+	}
 
 	return r
 }

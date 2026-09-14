@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"courtscore/internal/platform/entitlement"
 )
 
 type fakeFriends struct {
@@ -193,6 +195,20 @@ func (f *fakeScoreStore) listOpenLiveForParticipant(_ context.Context, userID st
 		return []LiveMatch{f.live}, 1, nil
 	}
 	return nil, 0, nil
+}
+
+func (f *fakeScoreStore) setShareToken(_ context.Context, _ string, token string) (LiveMatch, error) {
+	m := f.live
+	m.ShareToken = &token
+	f.live = m
+	return m, nil
+}
+
+func (f *fakeScoreStore) getLiveByShareToken(_ context.Context, token string) (LiveMatch, error) {
+	if f.live.ShareToken != nil && *f.live.ShareToken == token {
+		return f.live, nil
+	}
+	return LiveMatch{}, ErrNotFound
 }
 
 func newScoreService(store *fakeScoreStore, friends FriendChecker, push PushSender) *Service {
@@ -491,5 +507,53 @@ func TestGetHeadToHead_SelfRejectedAndEmptyOK(t *testing.T) {
 	_, err = svc.GetHeadToHead(context.Background(), me, opp, "")
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-friend err=%v", err)
+	}
+}
+
+type fakeGate struct {
+	err error
+}
+
+func (g *fakeGate) AllowCloudSync(context.Context, string) error  { return g.err }
+func (g *fakeGate) AllowStats(context.Context, string) error      { return g.err }
+func (g *fakeGate) AllowPublicLive(context.Context, string) error { return g.err }
+func (g *fakeGate) AllowLargeTournament(context.Context, string, int) error {
+	return g.err
+}
+func (g *fakeGate) MaxParticipants(context.Context, string) (int, error) {
+	return 8, nil
+}
+
+func TestCreateMatch_ProRequired(t *testing.T) {
+	svc := newScoreService(&fakeScoreStore{}, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{err: entitlement.ErrProRequired})
+	_, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+	})
+	if !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestEndLiveMatch_SkipsHistoryWhenProRequired(t *testing.T) {
+	store := &fakeScoreStore{live: LiveMatch{ID: "live-1", CreatedBy: "u1", Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B"}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{err: entitlement.ErrProRequired})
+	got, err := svc.EndLiveMatch(context.Background(), "u1", "live-1", LiveEndInput{WinnerSide: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Archived || store.historyID != "" {
+		t.Fatalf("should not archive: %+v history=%s", got, store.historyID)
+	}
+}
+
+func TestShareLiveMatch_ProRequired(t *testing.T) {
+	store := &fakeScoreStore{live: LiveMatch{ID: "live-1", CreatedBy: "u1"}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{err: entitlement.ErrProRequired})
+	_, _, err := svc.ShareLiveMatch(context.Background(), "u1", "live-1")
+	if !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("err=%v", err)
 	}
 }

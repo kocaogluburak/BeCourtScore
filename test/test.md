@@ -61,6 +61,10 @@ make test
 | SOCIAL-04 | done | AcceptRequest FCM friend.request_accepted to requester |
 | ID-BE-01 | done | AuthWithProvider + Refresh + Revoke |
 | ID-BE-02 | done | DELETE /v1/me hard-delete account (handler + service) |
+| PRO-01 | done | entitlement snapshot: under cap / 10+ lock / active / grace / expired |
+| PRO-02 | done | POST /v1/matches 402 pro_required; EndLiveMatch skips history when locked |
+| PRO-03 | done | tournament create max>8 Pro; default caps to 8 when over quota |
+| PRO-04 | done | billing verify handlers + Google RTDN parse; Apple JWS payload fallback |
 
 ## Öncelik (2 haftalık)
 

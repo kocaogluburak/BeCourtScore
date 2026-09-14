@@ -14,7 +14,7 @@ func baseLive() LiveMatch {
 		ID: "live-1", Sport: "TENNIS", Status: "IN_PROGRESS",
 		PlayerAName: "Ada", PlayerBName: "Grace",
 		PlayerBUserID: &opp,
-		SetsToWin: 2, AdvantageEnabled: true, PointsToWin: 11,
+		SetsToWin:     2, AdvantageEnabled: true, PointsToWin: 11,
 		CreatedBy: "user-abc", StartedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 }

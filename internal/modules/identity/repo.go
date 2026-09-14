@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"courtscore/internal/platform/entitlement"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,15 +14,16 @@ import (
 
 // User is the application's user record.
 type User struct {
-	ID            string     `json:"id"`
-	Email         *string    `json:"email"`
-	EmailVerified bool       `json:"email_verified"`
-	Nickname      *string    `json:"nickname"`
-	Name          *string    `json:"name"`
-	Surname       *string    `json:"surname"`
-	ProfileIcon   *string    `json:"profile_icon"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID            string                `json:"id"`
+	Email         *string               `json:"email"`
+	EmailVerified bool                  `json:"email_verified"`
+	Nickname      *string               `json:"nickname"`
+	Name          *string               `json:"name"`
+	Surname       *string               `json:"surname"`
+	ProfileIcon   *string               `json:"profile_icon"`
+	CreatedAt     time.Time             `json:"created_at"`
+	UpdatedAt     time.Time             `json:"updated_at"`
+	Entitlement   *entitlement.Snapshot `json:"entitlement,omitempty"`
 }
 
 // UpdateInput holds the optional profile fields a user can change.

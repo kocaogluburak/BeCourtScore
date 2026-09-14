@@ -32,5 +32,8 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 		r.Post("/v1/live-matches/{id}/cancel", h.cancelLiveMatch)
 		r.Post("/v1/live-matches/{id}/accept", h.acceptLiveMatch)
 		r.Post("/v1/live-matches/{id}/decline", h.declineLiveMatch)
+		r.Post("/v1/live-matches/{id}/share", h.shareLiveMatch)
 	})
+
+	r.Get("/v1/public/live/{token}", h.getPublicLiveMatch)
 }

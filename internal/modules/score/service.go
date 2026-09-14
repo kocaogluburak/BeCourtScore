@@ -2,9 +2,14 @@ package score
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base32"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/sse"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -41,19 +46,32 @@ type store interface {
 	cancelLive(ctx context.Context, id string) (LiveMatch, error)
 	acceptLive(ctx context.Context, id string) (LiveMatch, error)
 	listOpenLiveForParticipant(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error)
+	setShareToken(ctx context.Context, id, token string) (LiveMatch, error)
+	getLiveByShareToken(ctx context.Context, token string) (LiveMatch, error)
 }
 
 // Service is the score domain's business logic layer.
 type Service struct {
-	repo    store
-	friends FriendChecker
-	hub     *sse.Hub
-	push    PushSender
+	repo            store
+	friends         FriendChecker
+	hub             *sse.Hub
+	push            PushSender
+	gate            entitlement.Gate
+	publicWebOrigin string
 }
 
 // NewService creates a Service wired to the given Postgres pool.
 func NewService(pool *pgxpool.Pool, friends FriendChecker, hub *sse.Hub, push PushSender) *Service {
-	return &Service{repo: &repo{pool: pool}, friends: friends, hub: hub, push: push}
+	return &Service{repo: &repo{pool: pool}, friends: friends, hub: hub, push: push, publicWebOrigin: "https://court-score.com"}
+}
+
+func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }
+
+func (s *Service) SetPublicWebOrigin(origin string) {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin != "" {
+		s.publicWebOrigin = origin
+	}
 }
 
 // CreateMatch validates and records a finished match.
@@ -72,6 +90,11 @@ func (s *Service) CreateMatch(ctx context.Context, userID string, in CreateInput
 	}
 	if err := validateSetScores(in.SetScores); err != nil {
 		return Match{}, err
+	}
+	if s.gate != nil {
+		if err := s.gate.AllowCloudSync(ctx, userID); err != nil {
+			return Match{}, err
+		}
 	}
 	return s.repo.insert(ctx, userID, in)
 }
@@ -167,6 +190,11 @@ func (s *Service) GetUserStats(ctx context.Context, viewerID, targetID, sport st
 	if err := s.requireSelfOrFriend(ctx, viewerID, targetID); err != nil {
 		return UserStats{}, err
 	}
+	if s.gate != nil {
+		if err := s.gate.AllowStats(ctx, viewerID); err != nil {
+			return UserStats{}, err
+		}
+	}
 	matches, err := s.repo.listParticipantMatches(ctx, targetID, "")
 	if err != nil {
 		return UserStats{}, err
@@ -185,6 +213,11 @@ func (s *Service) GetHeadToHead(ctx context.Context, viewerID, targetID, sport s
 	}
 	if err := s.requireSelfOrFriend(ctx, viewerID, targetID); err != nil {
 		return HeadToHead{}, err
+	}
+	if s.gate != nil {
+		if err := s.gate.AllowStats(ctx, viewerID); err != nil {
+			return HeadToHead{}, err
+		}
 	}
 	matches, err := s.repo.listH2HMatches(ctx, viewerID, targetID, sport)
 	if err != nil {
@@ -290,6 +323,21 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 		return LiveMatch{}, err
 	}
 
+	var historyID *string
+	if s.gate != nil {
+		if err := s.gate.AllowCloudSync(ctx, userID); errors.Is(err, entitlement.ErrProRequired) {
+			ended, endErr := s.repo.endLive(ctx, id, in, nil)
+			if endErr != nil {
+				return LiveMatch{}, endErr
+			}
+			ended.Archived = false
+			s.publishLive("match.ended", ended)
+			return ended, nil
+		} else if err != nil {
+			return LiveMatch{}, err
+		}
+	}
+
 	hist, err := s.repo.insert(ctx, userID, CreateInput{
 		Sport:         m.Sport,
 		PlayerAName:   m.PlayerAName,
@@ -304,10 +352,12 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 	if err != nil {
 		return LiveMatch{}, err
 	}
-	ended, err := s.repo.endLive(ctx, id, in, &hist.ID)
+	historyID = &hist.ID
+	ended, err := s.repo.endLive(ctx, id, in, historyID)
 	if err != nil {
 		return LiveMatch{}, err
 	}
+	ended.Archived = ended.HistoryMatchID != nil
 	s.publishLive("match.ended", ended)
 	return ended, nil
 }
@@ -380,6 +430,57 @@ func (s *Service) DeclineLiveMatch(ctx context.Context, userID, id string) (Live
 	}
 	s.publishLive("match.declined", declined)
 	return declined, nil
+}
+
+// ShareLiveMatch creates (or returns) a public spectator token for the creator.
+func (s *Service) ShareLiveMatch(ctx context.Context, userID, id string) (token, url string, err error) {
+	if s.gate != nil {
+		if err := s.gate.AllowPublicLive(ctx, userID); err != nil {
+			return "", "", err
+		}
+	}
+	m, err := s.repo.getLiveByID(ctx, id)
+	if err != nil {
+		return "", "", err
+	}
+	if m.CreatedBy != userID {
+		return "", "", ErrForbidden
+	}
+	if m.ShareToken != nil && *m.ShareToken != "" {
+		return *m.ShareToken, s.shareURL(*m.ShareToken), nil
+	}
+	token, err = newShareToken()
+	if err != nil {
+		return "", "", err
+	}
+	if _, err = s.repo.setShareToken(ctx, id, token); err != nil {
+		return "", "", err
+	}
+	return token, s.shareURL(token), nil
+}
+
+func (s *Service) GetLiveByShareToken(ctx context.Context, token string) (LiveMatch, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return LiveMatch{}, ErrNotFound
+	}
+	return s.repo.getLiveByShareToken(ctx, token)
+}
+
+func (s *Service) shareURL(token string) string {
+	origin := s.publicWebOrigin
+	if origin == "" {
+		origin = "https://court-score.com"
+	}
+	return origin + "/live/s/" + token
+}
+
+func newShareToken() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])), nil
 }
 
 func (s *Service) requireFriendIfSet(ctx context.Context, userID string, other *string) error {

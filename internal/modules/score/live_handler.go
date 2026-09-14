@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"courtscore/internal/platform/authkit"
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/httpx"
 )
 
@@ -222,6 +223,40 @@ func (h *handler) declineLiveMatch(w http.ResponseWriter, r *http.Request) {
 		default:
 			httpx.Error(w, http.StatusInternalServerError, "failed to decline live match")
 		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, m)
+}
+
+func (h *handler) shareLiveMatch(w http.ResponseWriter, r *http.Request) {
+	userID, _ := authkit.UserIDFromCtx(r.Context())
+	id := r.PathValue("id")
+	token, url, err := h.svc.ShareLiveMatch(r.Context(), userID, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "live match not found")
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "forbidden")
+		case errors.Is(err, entitlement.ErrProRequired):
+			httpx.ProRequired(w)
+		default:
+			httpx.Error(w, http.StatusInternalServerError, "failed to share live match")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"share_token": token, "share_url": url})
+}
+
+func (h *handler) getPublicLiveMatch(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	m, err := h.svc.GetLiveByShareToken(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.Error(w, http.StatusNotFound, "live match not found")
+			return
+		}
+		httpx.Error(w, http.StatusInternalServerError, "failed to get live match")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, m)
