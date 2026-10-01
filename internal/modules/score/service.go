@@ -8,11 +8,15 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/sse"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// liveStaleTTL closes open live sessions with no score activity for this long.
+const liveStaleTTL = 24 * time.Hour
 
 var validSports = map[string]bool{
 	"TENNIS": true, "PADEL": true, "SQUASH": true, "PING_PONG": true,
@@ -46,6 +50,7 @@ type store interface {
 	cancelLive(ctx context.Context, id string) (LiveMatch, error)
 	acceptLive(ctx context.Context, id string) (LiveMatch, error)
 	listOpenLiveForParticipant(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error)
+	expireStaleLive(ctx context.Context, olderThan time.Time) ([]LiveMatch, error)
 	setShareToken(ctx context.Context, id, token string) (LiveMatch, error)
 	getLiveByShareToken(ctx context.Context, token string) (LiveMatch, error)
 }
@@ -248,6 +253,8 @@ func (s *Service) StartLiveMatch(ctx context.Context, userID string, in LiveStar
 		return LiveMatch{}, err
 	}
 
+	s.expireStaleLiveMatches(ctx)
+
 	opp := registeredOpponentID(userID, in.PlayerAUserID, in.PlayerBUserID)
 	if opp != "" {
 		exists, err := s.repo.hasOpenLiveBetween(ctx, userID, opp)
@@ -277,6 +284,7 @@ func (s *Service) StartLiveMatch(ctx context.Context, userID string, in LiveStar
 
 // GetLiveMatch returns a live match if the viewer is creator or a registered participant.
 func (s *Service) GetLiveMatch(ctx context.Context, viewerID, id string) (LiveMatch, error) {
+	s.expireStaleLiveMatches(ctx)
 	m, err := s.repo.getLiveByID(ctx, id)
 	if err != nil {
 		return LiveMatch{}, err
@@ -364,21 +372,29 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 
 // ListMyOpenLiveMatches returns PENDING/IN_PROGRESS sessions for creator or participants.
 func (s *Service) ListMyOpenLiveMatches(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error) {
+	s.expireStaleLiveMatches(ctx)
 	return s.repo.listOpenLiveForParticipant(ctx, userID, limit, offset)
 }
 
 // CancelLiveMatch ends an open session without writing match history.
-// Creator only — used to abandon stuck / abandoned scoreboard sessions.
+// Creator may cancel PENDING or IN_PROGRESS; registered opponent may cancel IN_PROGRESS only
+// (PENDING invites use DeclineLiveMatch).
 func (s *Service) CancelLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error) {
 	m, err := s.repo.getLiveByID(ctx, id)
 	if err != nil {
 		return LiveMatch{}, err
 	}
-	if m.CreatedBy != userID {
+	switch {
+	case m.CreatedBy == userID:
+		if m.Status != "IN_PROGRESS" && m.Status != "PENDING" {
+			return LiveMatch{}, ErrWrongState
+		}
+	case isRegisteredOpponent(userID, m):
+		if m.Status != "IN_PROGRESS" {
+			return LiveMatch{}, ErrForbidden
+		}
+	default:
 		return LiveMatch{}, ErrForbidden
-	}
-	if m.Status != "IN_PROGRESS" && m.Status != "PENDING" {
-		return LiveMatch{}, ErrWrongState
 	}
 	cancelled, err := s.repo.cancelLive(ctx, id)
 	if err != nil {
@@ -386,6 +402,19 @@ func (s *Service) CancelLiveMatch(ctx context.Context, userID, id string) (LiveM
 	}
 	s.publishLive("match.cancelled", cancelled)
 	return cancelled, nil
+}
+
+// expireStaleLiveMatches closes open sessions with no activity for liveStaleTTL.
+// Best-effort: failures are logged and do not block the caller.
+func (s *Service) expireStaleLiveMatches(ctx context.Context) {
+	expired, err := s.repo.expireStaleLive(ctx, time.Now().Add(-liveStaleTTL))
+	if err != nil {
+		slog.Warn("expire stale live matches failed", "err", err)
+		return
+	}
+	for _, m := range expired {
+		s.publishLive("match.cancelled", m)
+	}
 }
 
 // AcceptLiveMatch lets the invited opponent promote PENDING → IN_PROGRESS.

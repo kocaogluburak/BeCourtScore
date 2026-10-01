@@ -197,6 +197,20 @@ func (f *fakeScoreStore) listOpenLiveForParticipant(_ context.Context, userID st
 	return nil, 0, nil
 }
 
+func (f *fakeScoreStore) expireStaleLive(_ context.Context, olderThan time.Time) ([]LiveMatch, error) {
+	open := f.live.Status == "IN_PROGRESS" || f.live.Status == "PENDING"
+	// Zero UpdatedAt means the fixture never set activity time — treat as fresh.
+	if !open || f.live.UpdatedAt.IsZero() || !f.live.UpdatedAt.Before(olderThan) {
+		return nil, nil
+	}
+	m := f.live
+	m.Status = "ENDED"
+	f.live = m
+	f.ended = true
+	f.openExists = false
+	return []LiveMatch{m}, nil
+}
+
 func (f *fakeScoreStore) setShareToken(_ context.Context, _ string, token string) (LiveMatch, error) {
 	m := f.live
 	m.ShareToken = &token
@@ -361,6 +375,98 @@ func TestCancelLiveMatch_Pending(t *testing.T) {
 	got, err := svc.CancelLiveMatch(context.Background(), "u1", "live-1")
 	if err != nil || got.Status != "ENDED" {
 		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+func TestCancelLiveMatch_OpponentInProgress(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Sport: "TENNIS", Status: "IN_PROGRESS", CreatedBy: "u1",
+		PlayerAName: "A", PlayerBName: "B", PlayerBUserID: &opp,
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+
+	got, err := svc.CancelLiveMatch(context.Background(), "u2", "live-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "ENDED" || store.historyID != "" {
+		t.Fatalf("status=%s history=%q", got.Status, store.historyID)
+	}
+}
+
+func TestCancelLiveMatch_OpponentPendingForbidden(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Status: "PENDING", CreatedBy: "u1", PlayerBUserID: &opp,
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	if _, err := svc.CancelLiveMatch(context.Background(), "u2", "live-1"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCancelLiveMatch_StrangerForbidden(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Status: "IN_PROGRESS", CreatedBy: "u1", PlayerBUserID: &opp,
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	if _, err := svc.CancelLiveMatch(context.Background(), "u3", "live-1"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestExpireStaleLive_ListClearsOpen(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Status: "IN_PROGRESS", CreatedBy: "u1", PlayerBUserID: &opp,
+		UpdatedAt: time.Now().Add(-25 * time.Hour),
+	}, openExists: true}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+
+	items, total, err := svc.ListMyOpenLiveMatches(context.Background(), "u2", 20, 0)
+	if err != nil || total != 0 || len(items) != 0 {
+		t.Fatalf("items=%v total=%d err=%v", items, total, err)
+	}
+	if store.live.Status != "ENDED" {
+		t.Fatalf("status=%s", store.live.Status)
+	}
+}
+
+func TestExpireStaleLive_StartAllowsNewAfterStale(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-old", Status: "IN_PROGRESS", CreatedBy: "u1", PlayerBUserID: &opp,
+		UpdatedAt: time.Now().Add(-25 * time.Hour),
+	}, openExists: true}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+
+	got, err := svc.StartLiveMatch(context.Background(), "u1", LiveStartInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", PlayerBUserID: &opp,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "PENDING" {
+		t.Fatalf("status=%s", got.Status)
+	}
+}
+
+func TestExpireStaleLive_FreshNotExpired(t *testing.T) {
+	opp := "u2"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Status: "IN_PROGRESS", CreatedBy: "u1", PlayerBUserID: &opp,
+		UpdatedAt: time.Now().Add(-1 * time.Hour),
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+
+	items, total, err := svc.ListMyOpenLiveMatches(context.Background(), "u1", 20, 0)
+	if err != nil || total != 1 || len(items) != 1 {
+		t.Fatalf("items=%v total=%d err=%v", items, total, err)
+	}
+	if store.live.Status != "IN_PROGRESS" {
+		t.Fatalf("status=%s", store.live.Status)
 	}
 }
 

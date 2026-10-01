@@ -270,6 +270,28 @@ func (r *repo) listOpenLiveForParticipant(ctx context.Context, userID string, li
 	return out, total, rows.Err()
 }
 
+// expireStaleLive ends open sessions whose updated_at is strictly before olderThan.
+func (r *repo) expireStaleLive(ctx context.Context, olderThan time.Time) ([]LiveMatch, error) {
+	rows, err := r.pool.Query(ctx, `
+		UPDATE live_matches SET
+			status = 'ENDED', ended_at = NOW(), updated_at = NOW()
+		WHERE `+openLiveStatuses+` AND updated_at < $1
+		RETURNING `+liveCols, olderThan)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LiveMatch
+	for rows.Next() {
+		m, err := scanLive(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 func (r *repo) setShareToken(ctx context.Context, id, token string) (LiveMatch, error) {
 	m, err := scanLive(r.pool.QueryRow(ctx, `
 		UPDATE live_matches SET share_token = $2, updated_at = NOW()

@@ -48,12 +48,13 @@ GET    /v1/live-matches              → open sessions, paginated
 GET    /v1/live-matches/{id}         → creator or registered participant
 PATCH  /v1/live-matches/{id}         → creator score snapshot
 POST   /v1/live-matches/{id}/end     → archive to history
-POST   /v1/live-matches/{id}/cancel
+POST   /v1/live-matches/{id}/cancel  → creator (PENDING|IN_PROGRESS) or registered opponent (IN_PROGRESS only)
 POST   /v1/live-matches/{id}/accept  → addressee only
 POST   /v1/live-matches/{id}/decline
 ```
 
 Friend vs friend: duplicate open live → 409. SSE `match.invite` / `match.started` / `match.score_updated`. FCM via `notify`.
+Open sessions with `updated_at` older than 24h are lazily expired (ENDED, no history) on list/start/get.
 
 ## Match body
 

@@ -27,7 +27,7 @@ make test
 | `internal/modules/social/service_test.go` | request state machine, reopen-after-reject, AreFriends, profile status |
 | `internal/modules/score/handler_test.go` | match CRUD + friendship gate + stats/h2h handlers |
 | `internal/modules/score/live_handler_test.go` | live match start/get/update/end/list/cancel/accept/decline + conflict |
-| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, duplicate open 409, accept/decline, participant list, push invite, stats/h2h gates |
+| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, duplicate open 409, accept/decline, opponent cancel IN_PROGRESS, stale 24h expire, participant list, push invite, stats/h2h gates |
 | `internal/modules/score/stats_test.go` | W/L form, rivals, sport filter, recorder-only ignored, H2H viewer perspective |
 | `internal/modules/notify/handler_test.go` | device register + unregister |
 | `internal/modules/notify/service_test.go` | Register/Unregister validation + SendToUser fan-out |
@@ -49,9 +49,10 @@ make test
 | TOUR-01…04 | done | service + handler |
 | SCORE-01…03 | n/a (client) | score module = match history API |
 | LIVE-01 | done | start live match → 201; service end→history |
-| LIVE-02 | done | list open + cancel without history |
+| LIVE-02 | done | list open + cancel without history; creator or IN_PROGRESS opponent |
 | LIVE-03 | done | friend start → PENDING + match.invite; guest → IN_PROGRESS |
 | LIVE-04 | done | accept/decline; list includes opponent; duplicate open → 409 |
+| LIVE-05 | done | opponent cancel IN_PROGRESS; PENDING opponent cancel forbidden; 24h stale expire on list/start |
 | HIST-01 | done | create match persists set_scores; invalid lines rejected |
 | STATS-01 | done | user stats self/friend gate; form + rivals aggregation; recorder-only ignored |
 | H2H-01 | done | h2h self → 400; friend gate; empty 200; viewer-perspective W/L |
