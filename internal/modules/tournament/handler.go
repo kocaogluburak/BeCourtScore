@@ -74,6 +74,9 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		SetsToWin        int        `json:"sets_to_win"`
 		AdvantageEnabled bool       `json:"advantage_enabled"`
 		PointsToWin      int        `json:"points_to_win"`
+		SetRule          string     `json:"set_rule"`
+		FinalSet         string     `json:"final_set"`
+		CourtCount       int        `json:"court_count"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body")
@@ -89,6 +92,9 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		SetsToWin:        body.SetsToWin,
 		AdvantageEnabled: body.AdvantageEnabled,
 		PointsToWin:      body.PointsToWin,
+		SetRule:          body.SetRule,
+		FinalSet:         body.FinalSet,
+		CourtCount:       body.CourtCount,
 	})
 	if err != nil {
 		writeErr(w, err)

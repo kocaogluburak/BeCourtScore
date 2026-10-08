@@ -48,6 +48,11 @@ POST   /v1/tournaments/matches/{matchId}/confirm → opponent/organizer approve|
 
 - `SINGLE_ELIM` — `buildSingleElim`: real matches first, BYEs to the tail, BYE winners auto-advance.
 - `ROUND_ROBIN` — `buildRoundRobin`: circle method; standings sorted by wins then set-diff (`parseScore`).
+- `AMERICANO` — `buildAmericano`: full rotating 2v2 schedule. Odd fields sit one player out per round.
+- `MEXICANO` — round 1 is 1+4 vs 2+3; later rounds are appended from point standings.
+- `KING_OF_THE_COURT` — winners move up a court, losers move down. One court stays put and still ranks by points.
+
+Social scores are team points (`16-12`), not set lines. Standings sort by points, then rounds won. `court_count` and `points_to_win` (16/24/32) live on the tournament. Partner ids stay on `tournament_matches` and are not written into `matches`.
 
 Valid sports: TENNIS, PADEL, SQUASH, PING_PONG. `max_participants` default 32, range 2..128.
 

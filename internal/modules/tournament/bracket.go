@@ -7,7 +7,9 @@ type MatchPlan struct {
 	Round     int
 	Position  int
 	A         string
+	A2        string // partner of A; empty for singles fixtures
 	B         string
+	B2        string // partner of B; empty for singles fixtures
 	Winner    string // pre-decided for BYE matches
 	Status    string // READY | BYE | PENDING
 	NextRound int

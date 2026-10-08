@@ -29,6 +29,13 @@ type svcFacade interface {
 	ListFriends(ctx context.Context, userID string, limit, offset int) ([]UserSummary, int64, error)
 	ListIncomingRequests(ctx context.Context, userID string, limit, offset int) ([]IncomingRequest, int64, error)
 	Unfriend(ctx context.Context, userID, otherID string) error
+	ListGroups(ctx context.Context, userID string) ([]Group, error)
+	CreateGroup(ctx context.Context, userID, name, sport string) (Group, error)
+	JoinGroup(ctx context.Context, userID, code string) (Group, error)
+	GetGroup(ctx context.Context, userID, groupID string) (GroupDetail, error)
+	GetGroupByCode(ctx context.Context, userID, code string) (GroupDetail, error)
+	DeleteGroup(ctx context.Context, userID, groupID string) error
+	LeaveGroup(ctx context.Context, userID, groupID string) error
 }
 
 type handler struct {

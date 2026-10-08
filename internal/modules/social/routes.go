@@ -28,5 +28,13 @@ func Mount(r chi.Router, svc svcFacade, hub *sse.Hub, push PushSender, authMW fu
 		r.Post("/v1/friends/requests", h.sendRequest)
 		r.Post("/v1/friends/requests/{id}/accept", h.acceptRequest)
 		r.Post("/v1/friends/requests/{id}/reject", h.rejectRequest)
+
+		r.Get("/v1/groups", h.listGroups)
+		r.Post("/v1/groups", h.createGroup)
+		r.Post("/v1/groups/join", h.joinGroup)
+		r.Get("/v1/groups/by-code/{code}", h.getGroupByCode)
+		r.Get("/v1/groups/{id}", h.getGroup)
+		r.Delete("/v1/groups/{id}", h.deleteGroup)
+		r.Delete("/v1/groups/{id}/membership", h.leaveGroup)
 	})
 }

@@ -15,6 +15,7 @@ type UserStats struct {
 	SetsFor     int            `json:"sets_for"`
 	SetsAgainst int            `json:"sets_against"`
 	SetDiff     int            `json:"set_diff"`
+	Rating      int            `json:"rating,omitempty"`
 	Form        []string       `json:"form"`
 	Rivals      []RivalSummary `json:"rivals"`
 	BySport     []SportStats   `json:"by_sport"`
@@ -27,6 +28,7 @@ type SportStats struct {
 	Wins    int    `json:"wins"`
 	Losses  int    `json:"losses"`
 	SetDiff int    `json:"set_diff"`
+	Rating  int    `json:"rating,omitempty"`
 }
 
 // RivalSummary is one registered opponent ranked by match count.
@@ -55,12 +57,7 @@ type HeadToHead struct {
 // participantOutcome returns "W" or "L" when userID is a registered player on the match.
 // Empty string means the user is not a participant (e.g. recorder-only).
 func participantOutcome(m Match, userID string) string {
-	side := ""
-	if m.PlayerAUserID != nil && *m.PlayerAUserID == userID {
-		side = "A"
-	} else if m.PlayerBUserID != nil && *m.PlayerBUserID == userID {
-		side = "B"
-	}
+	side := sideOf(m, userID)
 	if side == "" {
 		return ""
 	}
@@ -71,29 +68,14 @@ func participantOutcome(m Match, userID string) string {
 }
 
 func setsForAgainst(m Match, userID string) (forSets, against int, ok bool) {
-	if m.PlayerAUserID != nil && *m.PlayerAUserID == userID {
+	switch sideOf(m, userID) {
+	case "A":
 		return m.SetsA, m.SetsB, true
-	}
-	if m.PlayerBUserID != nil && *m.PlayerBUserID == userID {
+	case "B":
 		return m.SetsB, m.SetsA, true
+	default:
+		return 0, 0, false
 	}
-	return 0, 0, false
-}
-
-func opponentOf(m Match, userID string) (oppID, oppName string, ok bool) {
-	if m.PlayerAUserID != nil && *m.PlayerAUserID == userID {
-		if m.PlayerBUserID == nil || *m.PlayerBUserID == "" {
-			return "", "", false
-		}
-		return *m.PlayerBUserID, m.PlayerBName, true
-	}
-	if m.PlayerBUserID != nil && *m.PlayerBUserID == userID {
-		if m.PlayerAUserID == nil || *m.PlayerAUserID == "" {
-			return "", "", false
-		}
-		return *m.PlayerAUserID, m.PlayerAName, true
-	}
-	return "", "", false
 }
 
 // aggregateUserStats builds career stats from participant matches (newest first preferred for form).
@@ -138,11 +120,11 @@ func aggregateUserStats(userID string, sportFilter string, matches []Match) User
 			if len(out.Form) < formLimit {
 				out.Form = append(out.Form, outcome)
 			}
-			if oppID, oppName, hasOpp := opponentOf(m, userID); hasOpp {
-				r, exists := rivals[oppID]
+			for _, opp := range opponentsOf(m, userID) {
+				r, exists := rivals[opp.id]
 				if !exists {
-					r = &RivalSummary{UserID: oppID, Name: oppName}
-					rivals[oppID] = r
+					r = &RivalSummary{UserID: opp.id, Name: opp.name}
+					rivals[opp.id] = r
 				}
 				r.Matches++
 				if outcome == "W" {
@@ -150,9 +132,8 @@ func aggregateUserStats(userID string, sportFilter string, matches []Match) User
 				} else {
 					r.Losses++
 				}
-				// Prefer non-empty display name if later rows refine it.
-				if oppName != "" {
-					r.Name = oppName
+				if opp.name != "" {
+					r.Name = opp.name
 				}
 			}
 		}

@@ -42,6 +42,8 @@ type store interface {
 	deleteByID(ctx context.Context, id, createdBy string) error
 	listParticipantMatches(ctx context.Context, userID, sport string) ([]Match, error)
 	listH2HMatches(ctx context.Context, userA, userB, sport string) ([]Match, error)
+	applySinglesElo(ctx context.Context, sport, winnerID, loserID string) error
+	listRatings(ctx context.Context, userID string) ([]UserRating, error)
 	insertLive(ctx context.Context, createdBy string, in LiveStartInput) (LiveMatch, error)
 	getLiveByID(ctx context.Context, id string) (LiveMatch, error)
 	hasOpenLiveBetween(ctx context.Context, creatorID, opponentID string) (bool, error)
@@ -53,6 +55,7 @@ type store interface {
 	expireStaleLive(ctx context.Context, olderThan time.Time) ([]LiveMatch, error)
 	setShareToken(ctx context.Context, id, token string) (LiveMatch, error)
 	getLiveByShareToken(ctx context.Context, token string) (LiveMatch, error)
+	setDeclined(ctx context.Context, id string, userIDs []string) (LiveMatch, error)
 }
 
 // Service is the score domain's business logic layer.
@@ -87,6 +90,14 @@ func (s *Service) CreateMatch(ctx context.Context, userID string, in CreateInput
 	if in.PlayerAName == "" || in.PlayerBName == "" {
 		return Match{}, fmt.Errorf("%w: player names required", ErrInvalid)
 	}
+	a2, b2, aID, bID, a2ID, b2ID, err := normalizePartners(
+		in.PlayerA2Name, in.PlayerB2Name, in.PlayerAUserID, in.PlayerBUserID, in.PlayerA2UserID, in.PlayerB2UserID,
+	)
+	if err != nil {
+		return Match{}, err
+	}
+	in.PlayerA2Name, in.PlayerB2Name = a2, b2
+	in.PlayerAUserID, in.PlayerBUserID, in.PlayerA2UserID, in.PlayerB2UserID = aID, bID, a2ID, b2ID
 	if in.WinnerSide != "A" && in.WinnerSide != "B" {
 		return Match{}, fmt.Errorf("%w: winner_side must be A or B", ErrInvalid)
 	}
@@ -96,12 +107,28 @@ func (s *Service) CreateMatch(ctx context.Context, userID string, in CreateInput
 	if err := validateSetScores(in.SetScores); err != nil {
 		return Match{}, err
 	}
+	rule, final, err := normalizeSetFormat(in.SetRule, in.FinalSet)
+	if err != nil {
+		return Match{}, err
+	}
+	in.SetRule, in.FinalSet = rule, final
+	in.PointLog = capPointLog(in.PointLog)
+	if in.DurationSeconds != nil && *in.DurationSeconds < 0 {
+		in.DurationSeconds = nil
+	}
 	if s.gate != nil {
 		if err := s.gate.AllowCloudSync(ctx, userID); err != nil {
 			return Match{}, err
 		}
 	}
-	return s.repo.insert(ctx, userID, in)
+	m, err := s.repo.insert(ctx, userID, in)
+	if err != nil {
+		return Match{}, err
+	}
+	if err := s.rateFinished(ctx, m); err != nil {
+		return Match{}, err
+	}
+	return m, nil
 }
 
 func validateSetScores(scores []SetScore) error {
@@ -144,13 +171,11 @@ func (s *Service) GetMatch(ctx context.Context, viewerID, matchID string) (Match
 		return Match{}, err
 	}
 
-	if m.CreatedBy == viewerID ||
-		(m.PlayerAUserID != nil && *m.PlayerAUserID == viewerID) ||
-		(m.PlayerBUserID != nil && *m.PlayerBUserID == viewerID) {
+	if m.CreatedBy == viewerID || matchHasUser(m, viewerID) {
 		return m, nil
 	}
 
-	for _, participant := range []*string{&m.CreatedBy, m.PlayerAUserID, m.PlayerBUserID} {
+	for _, participant := range []*string{&m.CreatedBy, m.PlayerAUserID, m.PlayerBUserID, m.PlayerA2UserID, m.PlayerB2UserID} {
 		if participant == nil {
 			continue
 		}
@@ -204,7 +229,19 @@ func (s *Service) GetUserStats(ctx context.Context, viewerID, targetID, sport st
 	if err != nil {
 		return UserStats{}, err
 	}
-	return aggregateUserStats(targetID, sport, matches), nil
+	ratings, err := s.repo.listRatings(ctx, targetID)
+	if err != nil {
+		return UserStats{}, err
+	}
+	return attachRatings(aggregateUserStats(targetID, sport, matches), ratings), nil
+}
+
+func (s *Service) rateFinished(ctx context.Context, m Match) error {
+	winner, loser, ok := singlesEloPair(m)
+	if !ok {
+		return nil
+	}
+	return s.repo.applySinglesElo(ctx, m.Sport, winner, loser)
 }
 
 // GetHeadToHead returns viewer-vs-target stats from the viewer's perspective.
@@ -240,9 +277,22 @@ func (s *Service) StartLiveMatch(ctx context.Context, userID string, in LiveStar
 	if in.PlayerAName == "" || in.PlayerBName == "" {
 		return LiveMatch{}, fmt.Errorf("%w: player names required", ErrInvalid)
 	}
+	a2, b2, aID, bID, a2ID, b2ID, err := normalizePartners(
+		in.PlayerA2Name, in.PlayerB2Name, in.PlayerAUserID, in.PlayerBUserID, in.PlayerA2UserID, in.PlayerB2UserID,
+	)
+	if err != nil {
+		return LiveMatch{}, err
+	}
+	in.PlayerA2Name, in.PlayerB2Name = a2, b2
+	in.PlayerAUserID, in.PlayerBUserID, in.PlayerA2UserID, in.PlayerB2UserID = aID, bID, a2ID, b2ID
 	if in.SetsToWin < 1 {
 		in.SetsToWin = 2
 	}
+	rule, final, err := normalizeSetFormat(in.SetRule, in.FinalSet)
+	if err != nil {
+		return LiveMatch{}, err
+	}
+	in.SetRule, in.FinalSet = rule, final
 	if in.PointsToWin < 1 {
 		in.PointsToWin = 11
 	}
@@ -252,17 +302,25 @@ func (s *Service) StartLiveMatch(ctx context.Context, userID string, in LiveStar
 	if err := s.requireFriendIfSet(ctx, userID, in.PlayerBUserID); err != nil {
 		return LiveMatch{}, err
 	}
+	if err := s.requireFriendIfSet(ctx, userID, in.PlayerA2UserID); err != nil {
+		return LiveMatch{}, err
+	}
+	if err := s.requireFriendIfSet(ctx, userID, in.PlayerB2UserID); err != nil {
+		return LiveMatch{}, err
+	}
 
 	s.expireStaleLiveMatches(ctx)
 
-	opp := registeredOpponentID(userID, in.PlayerAUserID, in.PlayerBUserID)
-	if opp != "" {
-		exists, err := s.repo.hasOpenLiveBetween(ctx, userID, opp)
-		if err != nil {
-			return LiveMatch{}, err
-		}
-		if exists {
-			return LiveMatch{}, fmt.Errorf("%w: open live match already exists with this opponent", ErrConflict)
+	invitees := inviteeIDs(userID, in.PlayerAUserID, in.PlayerA2UserID, in.PlayerBUserID, in.PlayerB2UserID)
+	if len(invitees) > 0 {
+		for _, opp := range invitees {
+			exists, err := s.repo.hasOpenLiveBetween(ctx, userID, opp)
+			if err != nil {
+				return LiveMatch{}, err
+			}
+			if exists {
+				return LiveMatch{}, fmt.Errorf("%w: open live match already exists with this opponent", ErrConflict)
+			}
 		}
 		in.Status = "PENDING"
 	} else {
@@ -347,17 +405,28 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 	}
 
 	hist, err := s.repo.insert(ctx, userID, CreateInput{
-		Sport:         m.Sport,
-		PlayerAName:   m.PlayerAName,
-		PlayerBName:   m.PlayerBName,
-		PlayerAUserID: m.PlayerAUserID,
-		PlayerBUserID: m.PlayerBUserID,
-		SetsA:         in.SetsA,
-		SetsB:         in.SetsB,
-		SetScores:     in.SetScores,
-		WinnerSide:    in.WinnerSide,
+		Sport:           m.Sport,
+		PlayerAName:     m.PlayerAName,
+		PlayerBName:     m.PlayerBName,
+		PlayerAUserID:   m.PlayerAUserID,
+		PlayerBUserID:   m.PlayerBUserID,
+		PlayerA2Name:    m.PlayerA2Name,
+		PlayerB2Name:    m.PlayerB2Name,
+		PlayerA2UserID:  m.PlayerA2UserID,
+		PlayerB2UserID:  m.PlayerB2UserID,
+		SetRule:         m.SetRule,
+		FinalSet:        m.FinalSet,
+		SetsA:           in.SetsA,
+		SetsB:           in.SetsB,
+		SetScores:       in.SetScores,
+		WinnerSide:      in.WinnerSide,
+		PointLog:        in.PointLog,
+		DurationSeconds: in.DurationSeconds,
 	})
 	if err != nil {
+		return LiveMatch{}, err
+	}
+	if err := s.rateFinished(ctx, hist); err != nil {
 		return LiveMatch{}, err
 	}
 	historyID = &hist.ID
@@ -429,6 +498,9 @@ func (s *Service) AcceptLiveMatch(ctx context.Context, userID, id string) (LiveM
 	if m.Status != "PENDING" {
 		return LiveMatch{}, ErrWrongState
 	}
+	if containsID(m.DeclinedUserIDs, userID) {
+		return LiveMatch{}, ErrForbidden
+	}
 	if err := s.requireFriendIfSet(ctx, userID, &m.CreatedBy); err != nil {
 		return LiveMatch{}, err
 	}
@@ -453,12 +525,24 @@ func (s *Service) DeclineLiveMatch(ctx context.Context, userID, id string) (Live
 	if m.Status != "PENDING" {
 		return LiveMatch{}, ErrWrongState
 	}
-	declined, err := s.repo.cancelLive(ctx, id)
+	if containsID(m.DeclinedUserIDs, userID) {
+		return LiveMatch{}, ErrForbidden
+	}
+	next := append(append([]string{}, m.DeclinedUserIDs...), userID)
+	if len(remainingAfter(m, next)) == 0 {
+		declined, err := s.repo.cancelLive(ctx, id)
+		if err != nil {
+			return LiveMatch{}, err
+		}
+		s.publishLive("match.declined", declined)
+		return declined, nil
+	}
+	updated, err := s.repo.setDeclined(ctx, id, next)
 	if err != nil {
 		return LiveMatch{}, err
 	}
-	s.publishLive("match.declined", declined)
-	return declined, nil
+	s.publishLive("match.declined", updated)
+	return updated, nil
 }
 
 // ShareLiveMatch creates (or returns) a public spectator token for the creator.
@@ -530,13 +614,10 @@ func (s *Service) canViewLive(viewerID string, m LiveMatch) bool {
 	if m.CreatedBy == viewerID {
 		return true
 	}
-	if m.PlayerAUserID != nil && *m.PlayerAUserID == viewerID {
-		return true
+	if !liveUserInSlots(viewerID, m) {
+		return false
 	}
-	if m.PlayerBUserID != nil && *m.PlayerBUserID == viewerID {
-		return true
-	}
-	return false
+	return !containsID(m.DeclinedUserIDs, viewerID)
 }
 
 func (s *Service) publishLive(typ string, m LiveMatch) {
@@ -558,18 +639,20 @@ func (s *Service) pushInvite(ctx context.Context, starterID string, m LiveMatch)
 	if s.push == nil {
 		return
 	}
-	opp := opponentUserID(starterID, m)
-	if opp == "" {
-		return
-	}
 	title := "Live match invite"
-	body := fmt.Sprintf("%s vs %s — accept to watch the score", m.PlayerAName, m.PlayerBName)
+	body := fmt.Sprintf("%s vs %s — accept to watch the score",
+		sideLabel(m.PlayerAName, m.PlayerA2Name), sideLabel(m.PlayerBName, m.PlayerB2Name))
 	data := map[string]string{
 		"type":          "match.invite",
 		"live_match_id": m.ID,
 	}
-	if err := s.push.SendToUser(ctx, opp, title, body, data); err != nil {
-		slog.Warn("live match invite push failed", "err", err)
+	for _, opp := range liveInvitees(m) {
+		if opp == starterID {
+			continue
+		}
+		if err := s.push.SendToUser(ctx, opp, title, body, data); err != nil {
+			slog.Warn("live match invite push failed", "err", err)
+		}
 	}
 }
 
@@ -578,7 +661,8 @@ func (s *Service) pushAccepted(ctx context.Context, m LiveMatch) {
 		return
 	}
 	title := "Live match accepted"
-	body := fmt.Sprintf("%s vs %s — opponent is watching", m.PlayerAName, m.PlayerBName)
+	body := fmt.Sprintf("%s vs %s — opponent is watching",
+		sideLabel(m.PlayerAName, m.PlayerA2Name), sideLabel(m.PlayerBName, m.PlayerB2Name))
 	data := map[string]string{
 		"type":          "match.accepted",
 		"live_match_id": m.ID,
@@ -590,37 +674,24 @@ func (s *Service) pushAccepted(ctx context.Context, m LiveMatch) {
 
 func liveRecipientIDs(m LiveMatch) []string {
 	ids := []string{m.CreatedBy}
-	if m.PlayerAUserID != nil {
-		ids = append(ids, *m.PlayerAUserID)
-	}
-	if m.PlayerBUserID != nil {
-		ids = append(ids, *m.PlayerBUserID)
+	for _, id := range []*string{m.PlayerAUserID, m.PlayerA2UserID, m.PlayerBUserID, m.PlayerB2UserID} {
+		if id == nil || *id == "" || containsID(m.DeclinedUserIDs, *id) {
+			continue
+		}
+		ids = append(ids, *id)
 	}
 	return ids
 }
 
-func opponentUserID(starterID string, m LiveMatch) string {
-	return registeredOpponentID(starterID, m.PlayerAUserID, m.PlayerBUserID)
-}
-
-func registeredOpponentID(starterID string, a, b *string) string {
-	for _, id := range []*string{a, b} {
-		if id != nil && *id != "" && *id != starterID {
-			return *id
-		}
-	}
-	return ""
+func remainingAfter(m LiveMatch, declined []string) []string {
+	next := m
+	next.DeclinedUserIDs = declined
+	return remainingInvitees(next)
 }
 
 func isRegisteredOpponent(userID string, m LiveMatch) bool {
 	if m.CreatedBy == userID {
 		return false
 	}
-	if m.PlayerAUserID != nil && *m.PlayerAUserID == userID {
-		return true
-	}
-	if m.PlayerBUserID != nil && *m.PlayerBUserID == userID {
-		return true
-	}
-	return false
+	return liveUserInSlots(userID, m)
 }

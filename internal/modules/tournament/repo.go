@@ -33,6 +33,9 @@ type Tournament struct {
 	SetsToWin        int        `json:"sets_to_win"`
 	AdvantageEnabled bool       `json:"advantage_enabled"`
 	PointsToWin      int        `json:"points_to_win"`
+	SetRule          string     `json:"set_rule"`
+	FinalSet         string     `json:"final_set"`
+	CourtCount       int        `json:"court_count"`
 }
 
 // ListFilter narrows a tournament listing.
@@ -52,17 +55,21 @@ type Participant struct {
 
 // TournamentMatch is a single fixture (bracket node or round-robin game).
 type TournamentMatch struct {
-	ID              string  `json:"id"`
-	Round           int     `json:"round"`
-	PositionInRound int     `json:"position_in_round"`
-	ParticipantAID  *string `json:"participant_a_id"`
-	ParticipantBID  *string `json:"participant_b_id"`
-	ParticipantAName *string `json:"participant_a_name"`
-	ParticipantBName *string `json:"participant_b_name"`
-	NextMatchID     *string `json:"next_match_id"`
-	WinnerID        *string `json:"winner_participant_id"`
-	ScoreSummary    *string `json:"score_summary"`
-	Status          string  `json:"status"`
+	ID                string  `json:"id"`
+	Round             int     `json:"round"`
+	PositionInRound   int     `json:"position_in_round"`
+	ParticipantAID    *string `json:"participant_a_id"`
+	ParticipantA2ID   *string `json:"participant_a2_id,omitempty"`
+	ParticipantBID    *string `json:"participant_b_id"`
+	ParticipantB2ID   *string `json:"participant_b2_id,omitempty"`
+	ParticipantAName  *string `json:"participant_a_name"`
+	ParticipantA2Name *string `json:"participant_a2_name,omitempty"`
+	ParticipantBName  *string `json:"participant_b_name"`
+	ParticipantB2Name *string `json:"participant_b2_name,omitempty"`
+	NextMatchID       *string `json:"next_match_id"`
+	WinnerID          *string `json:"winner_participant_id"`
+	ScoreSummary      *string `json:"score_summary"`
+	Status            string  `json:"status"`
 }
 
 // matchDetail is the internal view used for authorization and progression.
@@ -71,9 +78,13 @@ type matchDetail struct {
 	TournamentID     string
 	Status           string
 	ParticipantAID   *string
+	ParticipantA2ID  *string
 	ParticipantBID   *string
+	ParticipantB2ID  *string
 	AUserID          *string
+	A2UserID         *string
 	BUserID          *string
+	B2UserID         *string
 	NextMatchID      *string
 	ReportedBy       *string
 	TournamentStatus string
@@ -93,6 +104,9 @@ type createParams struct {
 	SetsToWin        int
 	AdvantageEnabled bool
 	PointsToWin      int
+	SetRule          string
+	FinalSet         string
+	CourtCount       int
 }
 
 type seedAssignment struct {
@@ -130,7 +144,7 @@ const tournamentCols = `t.id, t.slug, t.join_code, t.name, t.sport, t.format, t.
 	t.organizer_id, COALESCE(NULLIF(org.nickname,''), org.email, '') AS organizer_name,
 	t.max_participants, t.champion_id, champ.display_name, t.starts_at, t.created_at,
 	COALESCE(pc.confirmed_count, 0),
-	t.sets_to_win, t.advantage_enabled, t.points_to_win`
+	t.sets_to_win, t.advantage_enabled, t.points_to_win, t.set_rule, t.final_set, t.court_count`
 
 // tournamentFrom is the FROM clause that must accompany tournamentCols.
 // Participant count uses a LATERAL subquery (index-backed) instead of a
@@ -152,24 +166,25 @@ const tournamentReturningCols = `id, slug, join_code, name, sport, format, statu
 	max_participants, champion_id, NULL::text, starts_at, created_at,
 	COALESCE((SELECT COUNT(*) FROM tournament_participants p
 	          WHERE p.tournament_id = tournaments.id AND p.status = 'CONFIRMED'), 0),
-	sets_to_win, advantage_enabled, points_to_win`
+	sets_to_win, advantage_enabled, points_to_win, set_rule, final_set, court_count`
 
 func scanTournament(row pgx.Row) (Tournament, error) {
 	var t Tournament
 	err := row.Scan(&t.ID, &t.Slug, &t.JoinCode, &t.Name, &t.Sport, &t.Format, &t.Status,
 		&t.OrganizerID, &t.OrganizerName, &t.MaxParticipants, &t.ChampionID, &t.ChampionName,
-		&t.StartsAt, &t.CreatedAt, &t.ParticipantCount, &t.SetsToWin, &t.AdvantageEnabled, &t.PointsToWin)
+		&t.StartsAt, &t.CreatedAt, &t.ParticipantCount, &t.SetsToWin, &t.AdvantageEnabled, &t.PointsToWin,
+		&t.SetRule, &t.FinalSet, &t.CourtCount)
 	return t, err
 }
 
 func (r *repo) create(ctx context.Context, in createParams) (Tournament, error) {
 	q := fmt.Sprintf(`
-		INSERT INTO tournaments (slug, join_code, name, sport, format, organizer_id, max_participants, starts_at, sets_to_win, advantage_enabled, points_to_win)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		INSERT INTO tournaments (slug, join_code, name, sport, format, organizer_id, max_participants, starts_at, sets_to_win, advantage_enabled, points_to_win, set_rule, final_set, court_count)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING %s`, tournamentReturningCols)
 	t, err := scanTournament(r.pool.QueryRow(ctx, q,
 		in.Slug, in.JoinCode, in.Name, in.Sport, in.Format, in.OrganizerID, in.MaxParticipants, in.StartsAt,
-		in.SetsToWin, in.AdvantageEnabled, in.PointsToWin))
+		in.SetsToWin, in.AdvantageEnabled, in.PointsToWin, in.SetRule, in.FinalSet, in.CourtCount))
 	if isUniqueViolation(err) {
 		return Tournament{}, errSlugTaken // slug clash; caller retries with a new slug
 	}
@@ -438,9 +453,9 @@ func (r *repo) replaceFixtures(ctx context.Context, tournamentID string, plans [
 		var id string
 		err = tx.QueryRow(ctx, `
 			INSERT INTO tournament_matches
-			  (tournament_id, round, position_in_round, participant_a_id, participant_b_id, winner_participant_id, status)
-			VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-			tournamentID, p.Round, p.Position, nilIfEmpty(p.A), nilIfEmpty(p.B), nilIfEmpty(p.Winner), p.Status,
+			  (tournament_id, round, position_in_round, participant_a_id, participant_a2_id, participant_b_id, participant_b2_id, winner_participant_id, status)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+			tournamentID, p.Round, p.Position, nilIfEmpty(p.A), nilIfEmpty(p.A2), nilIfEmpty(p.B), nilIfEmpty(p.B2), nilIfEmpty(p.Winner), p.Status,
 		).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("insert fixture: %w", err)
@@ -463,14 +478,31 @@ func (r *repo) replaceFixtures(ctx context.Context, tournamentID string, plans [
 	return tx.Commit(ctx)
 }
 
+func (r *repo) appendFixtures(ctx context.Context, tournamentID string, plans []MatchPlan) error {
+	for _, p := range plans {
+		_, err := r.pool.Exec(ctx, `
+			INSERT INTO tournament_matches
+			  (tournament_id, round, position_in_round, participant_a_id, participant_a2_id, participant_b_id, participant_b2_id, status)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			tournamentID, p.Round, p.Position, nilIfEmpty(p.A), nilIfEmpty(p.A2), nilIfEmpty(p.B), nilIfEmpty(p.B2), p.Status)
+		if err != nil {
+			return fmt.Errorf("append fixture: %w", err)
+		}
+	}
+	return nil
+}
+
 func (r *repo) bracketMatches(ctx context.Context, tournamentID string) ([]TournamentMatch, error) {
 	const q = `
-		SELECT m.id, m.round, m.position_in_round, m.participant_a_id, m.participant_b_id,
-		       pa.display_name, pb.display_name,
+		SELECT m.id, m.round, m.position_in_round,
+		       m.participant_a_id, m.participant_a2_id, m.participant_b_id, m.participant_b2_id,
+		       pa.display_name, pa2.display_name, pb.display_name, pb2.display_name,
 		       m.next_match_id, m.winner_participant_id, m.score_summary, m.status
 		FROM tournament_matches m
 		LEFT JOIN tournament_participants pa ON pa.id = m.participant_a_id
+		LEFT JOIN tournament_participants pa2 ON pa2.id = m.participant_a2_id
 		LEFT JOIN tournament_participants pb ON pb.id = m.participant_b_id
+		LEFT JOIN tournament_participants pb2 ON pb2.id = m.participant_b2_id
 		WHERE m.tournament_id=$1
 		ORDER BY m.round, m.position_in_round`
 	rows, err := r.pool.Query(ctx, q, tournamentID)
@@ -482,8 +514,9 @@ func (r *repo) bracketMatches(ctx context.Context, tournamentID string) ([]Tourn
 	list := []TournamentMatch{}
 	for rows.Next() {
 		var m TournamentMatch
-		if err := rows.Scan(&m.ID, &m.Round, &m.PositionInRound, &m.ParticipantAID, &m.ParticipantBID,
-			&m.ParticipantAName, &m.ParticipantBName,
+		if err := rows.Scan(&m.ID, &m.Round, &m.PositionInRound,
+			&m.ParticipantAID, &m.ParticipantA2ID, &m.ParticipantBID, &m.ParticipantB2ID,
+			&m.ParticipantAName, &m.ParticipantA2Name, &m.ParticipantBName, &m.ParticipantB2Name,
 			&m.NextMatchID, &m.WinnerID, &m.ScoreSummary, &m.Status); err != nil {
 			return nil, fmt.Errorf("scan match: %w", err)
 		}
@@ -494,18 +527,22 @@ func (r *repo) bracketMatches(ctx context.Context, tournamentID string) ([]Tourn
 
 func (r *repo) matchDetail(ctx context.Context, matchID string) (matchDetail, error) {
 	const q = `
-		SELECT m.id, m.tournament_id, m.status, m.participant_a_id, m.participant_b_id,
-		       m.next_match_id, m.reported_by, pa.user_id, pb.user_id,
+		SELECT m.id, m.tournament_id, m.status,
+		       m.participant_a_id, m.participant_a2_id, m.participant_b_id, m.participant_b2_id,
+		       m.next_match_id, m.reported_by, pa.user_id, pa2.user_id, pb.user_id, pb2.user_id,
 		       t.status, t.format, t.organizer_id
 		FROM tournament_matches m
 		JOIN tournaments t ON t.id = m.tournament_id
 		LEFT JOIN tournament_participants pa ON pa.id = m.participant_a_id
+		LEFT JOIN tournament_participants pa2 ON pa2.id = m.participant_a2_id
 		LEFT JOIN tournament_participants pb ON pb.id = m.participant_b_id
+		LEFT JOIN tournament_participants pb2 ON pb2.id = m.participant_b2_id
 		WHERE m.id=$1`
 	var d matchDetail
 	err := r.pool.QueryRow(ctx, q, matchID).Scan(
-		&d.ID, &d.TournamentID, &d.Status, &d.ParticipantAID, &d.ParticipantBID,
-		&d.NextMatchID, &d.ReportedBy, &d.AUserID, &d.BUserID,
+		&d.ID, &d.TournamentID, &d.Status,
+		&d.ParticipantAID, &d.ParticipantA2ID, &d.ParticipantBID, &d.ParticipantB2ID,
+		&d.NextMatchID, &d.ReportedBy, &d.AUserID, &d.A2UserID, &d.BUserID, &d.B2UserID,
 		&d.TournamentStatus, &d.Format, &d.OrganizerID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return matchDetail{}, ErrNotFound
@@ -518,16 +555,20 @@ func (r *repo) matchDetail(ctx context.Context, matchID string) (matchDetail, er
 
 func (r *repo) getMatch(ctx context.Context, matchID string) (TournamentMatch, error) {
 	const q = `
-		SELECT m.id, m.round, m.position_in_round, m.participant_a_id, m.participant_b_id,
-		       pa.display_name, pb.display_name,
+		SELECT m.id, m.round, m.position_in_round,
+		       m.participant_a_id, m.participant_a2_id, m.participant_b_id, m.participant_b2_id,
+		       pa.display_name, pa2.display_name, pb.display_name, pb2.display_name,
 		       m.next_match_id, m.winner_participant_id, m.score_summary, m.status
 		FROM tournament_matches m
 		LEFT JOIN tournament_participants pa ON pa.id = m.participant_a_id
+		LEFT JOIN tournament_participants pa2 ON pa2.id = m.participant_a2_id
 		LEFT JOIN tournament_participants pb ON pb.id = m.participant_b_id
+		LEFT JOIN tournament_participants pb2 ON pb2.id = m.participant_b2_id
 		WHERE m.id=$1`
 	var m TournamentMatch
 	err := r.pool.QueryRow(ctx, q, matchID).Scan(&m.ID, &m.Round, &m.PositionInRound,
-		&m.ParticipantAID, &m.ParticipantBID, &m.ParticipantAName, &m.ParticipantBName,
+		&m.ParticipantAID, &m.ParticipantA2ID, &m.ParticipantBID, &m.ParticipantB2ID,
+		&m.ParticipantAName, &m.ParticipantA2Name, &m.ParticipantBName, &m.ParticipantB2Name,
 		&m.NextMatchID, &m.WinnerID, &m.ScoreSummary, &m.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TournamentMatch{}, ErrNotFound
@@ -541,7 +582,7 @@ func (r *repo) getMatch(ctx context.Context, matchID string) (TournamentMatch, e
 func (r *repo) reportMatch(ctx context.Context, matchID, winnerID, score, reportedBy string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE tournament_matches
-		SET status='PENDING_CONFIRMATION', winner_participant_id=$2, score_summary=$3, reported_by=$4, confirmed_by=NULL
+		SET status='PENDING_CONFIRMATION', winner_participant_id=NULLIF($2,''), score_summary=$3, reported_by=$4, confirmed_by=NULL
 		WHERE id=$1`, matchID, winnerID, score, reportedBy)
 	if err != nil {
 		return fmt.Errorf("report match: %w", err)
@@ -563,7 +604,7 @@ func (r *repo) clearReport(ctx context.Context, matchID string) error {
 func (r *repo) completeMatch(ctx context.Context, matchID, winnerID, score, confirmedBy string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE tournament_matches
-		SET status='COMPLETED', winner_participant_id=$2, score_summary=$3, confirmed_by=$4
+		SET status='COMPLETED', winner_participant_id=NULLIF($2,''), score_summary=$3, confirmed_by=$4
 		WHERE id=$1`, matchID, winnerID, score, confirmedBy)
 	if err != nil {
 		return fmt.Errorf("complete match: %w", err)

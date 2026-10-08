@@ -21,6 +21,7 @@ var validSports = map[string]bool{
 }
 var validFormats = map[string]bool{
 	"SINGLE_ELIM": true, "ROUND_ROBIN": true,
+	"AMERICANO": true, "MEXICANO": true, "KING_OF_THE_COURT": true,
 }
 
 // store is the persistence surface the Service depends on. Implemented by *repo;
@@ -44,6 +45,7 @@ type store interface {
 	listMine(ctx context.Context, userID string, f ListFilter, limit, offset int) ([]Tournament, int64, error)
 
 	replaceFixtures(ctx context.Context, tournamentID string, plans []MatchPlan) error
+	appendFixtures(ctx context.Context, tournamentID string, plans []MatchPlan) error
 	bracketMatches(ctx context.Context, tournamentID string) ([]TournamentMatch, error)
 	matchDetail(ctx context.Context, matchID string) (matchDetail, error)
 	getMatch(ctx context.Context, matchID string) (TournamentMatch, error)
@@ -112,6 +114,9 @@ type CreateInput struct {
 	SetsToWin        int
 	AdvantageEnabled bool
 	PointsToWin      int
+	SetRule          string
+	FinalSet         string
+	CourtCount       int
 }
 
 // ── Create / read ────────────────────────────────────────────────────────────
@@ -153,6 +158,27 @@ func (s *Service) CreateTournament(ctx context.Context, userID string, in Create
 	if in.PointsToWin <= 0 {
 		in.PointsToWin = 11
 	}
+	if in.CourtCount <= 0 {
+		in.CourtCount = 1
+	}
+	if in.CourtCount > 8 {
+		return Tournament{}, fmt.Errorf("%w: court_count must be 1..8", ErrInvalid)
+	}
+	if isSocial(in.Format) {
+		if in.MaxParticipants < 4 {
+			return Tournament{}, fmt.Errorf("%w: social formats need at least 4 players", ErrInvalid)
+		}
+		switch in.PointsToWin {
+		case 16, 24, 32:
+		default:
+			in.PointsToWin = 24
+		}
+	}
+	rule, final, fmtErr := normalizeTournamentFormat(in.SetRule, in.FinalSet)
+	if fmtErr != nil {
+		return Tournament{}, fmtErr
+	}
+	in.SetRule, in.FinalSet = rule, final
 
 	code := makeJoinCode(in.Sport)
 	for attempt := 0; attempt < 6; attempt++ {
@@ -169,6 +195,9 @@ func (s *Service) CreateTournament(ctx context.Context, userID string, in Create
 			SetsToWin:        in.SetsToWin,
 			AdvantageEnabled: in.AdvantageEnabled,
 			PointsToWin:      in.PointsToWin,
+			SetRule:          in.SetRule,
+			FinalSet:         in.FinalSet,
+			CourtCount:       in.CourtCount,
 		})
 		if errors.Is(err, errSlugTaken) {
 			continue
@@ -314,8 +343,12 @@ func (s *Service) Lock(ctx context.Context, userID, tournamentID string) (Tourna
 	if err != nil {
 		return Tournament{}, err
 	}
-	if n < 2 {
-		return Tournament{}, fmt.Errorf("%w: need at least 2 participants", ErrInvalid)
+	need := 2
+	if isSocial(t.Format) {
+		need = 4
+	}
+	if n < need {
+		return Tournament{}, fmt.Errorf("%w: need at least %d participants", ErrInvalid, need)
 	}
 	if err := s.store.setStatus(ctx, tournamentID, "LOCKED"); err != nil {
 		return Tournament{}, err
@@ -339,8 +372,12 @@ func (s *Service) Draw(ctx context.Context, userID, tournamentID, mode string, s
 	if err != nil {
 		return Bracket{}, err
 	}
-	if len(participants) < 2 {
-		return Bracket{}, fmt.Errorf("%w: need at least 2 participants", ErrInvalid)
+	need := 2
+	if isSocial(t.Format) {
+		need = 4
+	}
+	if len(participants) < need {
+		return Bracket{}, fmt.Errorf("%w: need at least %d participants", ErrInvalid, need)
 	}
 
 	var ordered []string
@@ -370,6 +407,10 @@ func (s *Service) Draw(ctx context.Context, userID, tournamentID, mode string, s
 		plans = buildSingleElim(ordered)
 	case "ROUND_ROBIN":
 		plans = buildRoundRobin(ordered)
+	case "AMERICANO":
+		plans = buildAmericano(ordered, t.CourtCount)
+	case "MEXICANO", "KING_OF_THE_COURT":
+		plans = buildSocialRound(ordered, t.CourtCount, 1)
 	default:
 		return Bracket{}, fmt.Errorf("%w: unsupported format", ErrInvalid)
 	}
@@ -398,12 +439,16 @@ func (s *Service) buildBracket(ctx context.Context, format, tournamentID string)
 		return Bracket{}, err
 	}
 	b := Bracket{Format: format, Rounds: groupRounds(matches), Standings: []Standing{}}
-	if format == "ROUND_ROBIN" {
+	if format == "ROUND_ROBIN" || isSocial(format) {
 		parts, err := s.store.confirmedParticipants(ctx, tournamentID)
 		if err != nil {
 			return Bracket{}, err
 		}
-		b.Standings = computeStandings(parts, matches)
+		if isSocial(format) {
+			b.Standings = computePointStandings(parts, matches)
+		} else {
+			b.Standings = computeStandings(parts, matches)
+		}
 	}
 	return b, nil
 }
@@ -421,7 +466,17 @@ func (s *Service) SubmitResult(ctx context.Context, userID, matchID, winnerID, s
 	if d.Status != "READY" {
 		return TournamentMatch{}, fmt.Errorf("%w: match is not ready for a result", ErrWrongState)
 	}
-	if !matchHasParticipant(d, winnerID) {
+	if isSocial(d.Format) {
+		derived, ok := socialWinner(d, score)
+		if !ok {
+			return TournamentMatch{}, fmt.Errorf("%w: score must be team points like 16-12", ErrInvalid)
+		}
+		winnerID = derived
+	}
+	if winnerID != "" && !matchHasParticipant(d, winnerID) {
+		return TournamentMatch{}, fmt.Errorf("%w: winner must be a match participant", ErrInvalid)
+	}
+	if !isSocial(d.Format) && winnerID == "" {
 		return TournamentMatch{}, fmt.Errorf("%w: winner must be a match participant", ErrInvalid)
 	}
 
@@ -477,13 +532,23 @@ func (s *Service) ConfirmResult(ctx context.Context, userID, matchID string, app
 		if err != nil {
 			return TournamentMatch{}, err
 		}
-		if m.WinnerID == nil {
+		winner := ""
+		if m.WinnerID != nil {
+			winner = *m.WinnerID
+		}
+		if isSocial(d.Format) {
+			derived, ok := socialWinner(d, deref(m.ScoreSummary))
+			if !ok {
+				return TournamentMatch{}, fmt.Errorf("%w: score must be team points like 16-12", ErrInvalid)
+			}
+			winner = derived
+		} else if winner == "" {
 			return TournamentMatch{}, fmt.Errorf("%w: reported match has no winner", ErrInvalid)
 		}
-		if err := s.store.completeMatch(ctx, matchID, *m.WinnerID, deref(m.ScoreSummary), userID); err != nil {
+		if err := s.store.completeMatch(ctx, matchID, winner, deref(m.ScoreSummary), userID); err != nil {
 			return TournamentMatch{}, err
 		}
-		if err := s.advance(ctx, d, *m.WinnerID); err != nil {
+		if err := s.advance(ctx, d, winner); err != nil {
 			return TournamentMatch{}, err
 		}
 		s.publishAll(ctx, d.TournamentID, matchEvent("tournament.match_completed", d.TournamentID, matchID))
@@ -500,8 +565,11 @@ func (s *Service) ConfirmResult(ctx context.Context, userID, matchID string, app
 }
 
 // advance moves a winner into the next fixture (single-elim) or checks for
-// tournament completion (both formats).
+// tournament completion (round robin and social nights).
 func (s *Service) advance(ctx context.Context, d matchDetail, winnerID string) error {
+	if isSocial(d.Format) {
+		return s.advanceSocial(ctx, d)
+	}
 	if d.Format == "SINGLE_ELIM" {
 		if d.NextMatchID != nil {
 			return s.store.placeIntoNext(ctx, *d.NextMatchID, winnerID)
@@ -597,24 +665,37 @@ func sameSet(seeding []string, ps []Participant) bool {
 }
 
 func matchHasParticipant(d matchDetail, participantID string) bool {
-	return (d.ParticipantAID != nil && *d.ParticipantAID == participantID) ||
-		(d.ParticipantBID != nil && *d.ParticipantBID == participantID)
+	return idMatch(d.ParticipantAID, participantID) ||
+		idMatch(d.ParticipantA2ID, participantID) ||
+		idMatch(d.ParticipantBID, participantID) ||
+		idMatch(d.ParticipantB2ID, participantID)
+}
+
+func idMatch(id *string, want string) bool {
+	return id != nil && *id == want
 }
 
 func userIsPlayer(d matchDetail, userID string) bool {
-	return (d.AUserID != nil && *d.AUserID == userID) ||
-		(d.BUserID != nil && *d.BUserID == userID)
+	return idMatch(d.AUserID, userID) || idMatch(d.A2UserID, userID) ||
+		idMatch(d.BUserID, userID) || idMatch(d.B2UserID, userID)
 }
 
 func opponentUserID(d matchDetail, userID string) string {
-	if d.AUserID != nil && *d.AUserID == userID {
+	onA := idMatch(d.AUserID, userID) || idMatch(d.A2UserID, userID)
+	if onA {
 		if d.BUserID != nil {
 			return *d.BUserID
+		}
+		if d.B2UserID != nil {
+			return *d.B2UserID
 		}
 		return ""
 	}
 	if d.AUserID != nil {
 		return *d.AUserID
+	}
+	if d.A2UserID != nil {
+		return *d.A2UserID
 	}
 	return ""
 }
@@ -755,4 +836,24 @@ func randomString(n int) string {
 		b[i] = codeAlphabet[rand.Intn(len(codeAlphabet))]
 	}
 	return string(b)
+}
+
+func normalizeTournamentFormat(setRule, finalSet string) (string, string, error) {
+	if setRule == "" {
+		setRule = "STANDARD_6"
+	}
+	if finalSet == "" {
+		finalSet = "REGULAR"
+	}
+	switch setRule {
+	case "STANDARD_6", "FAST4", "PRO_SET":
+	default:
+		return "", "", fmt.Errorf("%w: set rule", ErrInvalid)
+	}
+	switch finalSet {
+	case "REGULAR", "MATCH_TIEBREAK":
+	default:
+		return "", "", fmt.Errorf("%w: final set", ErrInvalid)
+	}
+	return setRule, finalSet, nil
 }

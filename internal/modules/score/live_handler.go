@@ -17,7 +17,13 @@ func (h *handler) startLiveMatch(w http.ResponseWriter, r *http.Request) {
 		PlayerBName      string  `json:"player_b_name"`
 		PlayerAUserID    *string `json:"player_a_user_id"`
 		PlayerBUserID    *string `json:"player_b_user_id"`
+		PlayerA2Name     *string `json:"player_a2_name"`
+		PlayerB2Name     *string `json:"player_b2_name"`
+		PlayerA2UserID   *string `json:"player_a2_user_id"`
+		PlayerB2UserID   *string `json:"player_b2_user_id"`
 		SetsToWin        int     `json:"sets_to_win"`
+		SetRule          string  `json:"set_rule"`
+		FinalSet         string  `json:"final_set"`
 		AdvantageEnabled *bool   `json:"advantage_enabled"`
 		PointsToWin      int     `json:"points_to_win"`
 	}
@@ -35,7 +41,13 @@ func (h *handler) startLiveMatch(w http.ResponseWriter, r *http.Request) {
 		PlayerBName:      body.PlayerBName,
 		PlayerAUserID:    body.PlayerAUserID,
 		PlayerBUserID:    body.PlayerBUserID,
+		PlayerA2Name:     body.PlayerA2Name,
+		PlayerB2Name:     body.PlayerB2Name,
+		PlayerA2UserID:   body.PlayerA2UserID,
+		PlayerB2UserID:   body.PlayerB2UserID,
 		SetsToWin:        body.SetsToWin,
+		SetRule:          body.SetRule,
+		FinalSet:         body.FinalSet,
 		AdvantageEnabled: adv,
 		PointsToWin:      body.PointsToWin,
 	})
@@ -84,6 +96,7 @@ func (h *handler) updateLiveMatch(w http.ResponseWriter, r *http.Request) {
 		ScoreA     *int    `json:"score_a"`
 		ScoreB     *int    `json:"score_b"`
 		IsTieBreak *bool   `json:"is_tie_break"`
+		ServerIsA  *bool   `json:"server_is_a"`
 		WinnerSide *string `json:"winner_side"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
@@ -94,7 +107,7 @@ func (h *handler) updateLiveMatch(w http.ResponseWriter, r *http.Request) {
 		SetsA: body.SetsA, SetsB: body.SetsB,
 		GamesA: body.GamesA, GamesB: body.GamesB,
 		ScoreA: body.ScoreA, ScoreB: body.ScoreB,
-		IsTieBreak: body.IsTieBreak, WinnerSide: body.WinnerSide,
+		IsTieBreak: body.IsTieBreak, ServerIsA: body.ServerIsA, WinnerSide: body.WinnerSide,
 	})
 	if err != nil {
 		switch {
@@ -125,8 +138,10 @@ func (h *handler) endLiveMatch(w http.ResponseWriter, r *http.Request) {
 		ScoreA     int        `json:"score_a"`
 		ScoreB     int        `json:"score_b"`
 		IsTieBreak bool       `json:"is_tie_break"`
-		WinnerSide string     `json:"winner_side"`
-		SetScores  []SetScore `json:"set_scores"`
+		WinnerSide      string       `json:"winner_side"`
+		SetScores       []SetScore   `json:"set_scores"`
+		PointLog        []PointEvent `json:"point_log"`
+		DurationSeconds *int         `json:"duration_seconds"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body")
@@ -138,6 +153,7 @@ func (h *handler) endLiveMatch(w http.ResponseWriter, r *http.Request) {
 		ScoreA: body.ScoreA, ScoreB: body.ScoreB,
 		IsTieBreak: body.IsTieBreak, WinnerSide: body.WinnerSide,
 		SetScores: body.SetScores,
+		PointLog: body.PointLog, DurationSeconds: body.DurationSeconds,
 	})
 	if err != nil {
 		switch {

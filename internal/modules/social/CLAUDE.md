@@ -1,8 +1,8 @@
-# Domain: social — friendships + user search
+# Domain: social — friendships, user search, private groups
 
 > Focused notes for the `social` module. See `../../../CLAUDE.md` for the whole backend.
 
-Handles user search, public profiles, friend requests, and the friend list.
+Handles user search, public profiles, friend requests, the friend list, and invite-code groups.
 `social.Service` also implements `score.FriendChecker` (wired in `main.go`).
 
 ## Files
@@ -14,6 +14,7 @@ Handles user search, public profiles, friend requests, and the friend list.
 | `service.go` | Friendship rules; also exposes `IsFriend` for the score module |
 | `repo.go` | Postgres access to `friendships` |
 | `handler_test.go` | Handler tests |
+| `groups.go`, `ladder.go`, `groups_repo.go`, `groups_handler.go` | Invite-code groups and the weekly ladder |
 
 ## Routes
 
@@ -26,7 +27,23 @@ GET    /v1/friends/requests             → incoming pending requests, paginated
 POST   /v1/friends/requests             → {"user_id": "..."} send request (409 if pending/friends)
 POST   /v1/friends/requests/{id}/accept → addressee only
 POST   /v1/friends/requests/{id}/reject → addressee only
+GET    /v1/groups                       → caller's groups
+POST   /v1/groups                       → {"name","sport"} create; caller is owner
+POST   /v1/groups/join                  → {"code"} join
+GET    /v1/groups/by-code/{code}        → members only: members + this ISO week
+GET    /v1/groups/{id}                  → members only: members + this ISO week
+DELETE /v1/groups/{id}                  → owner only
+DELETE /v1/groups/{id}/membership       → leave; owner must delete instead
 ```
+
+## Weekly ladder
+
+- Tables `groups` and `group_members`. No match table of its own.
+- Standings read finished `matches` whose sport is the group's sport and whose `played_at` falls in the current ISO week (Monday 00:00 UTC inclusive, next Monday exclusive).
+- A match counts when each side has at least one registered player and every registered player on both sides is a current member. A guest or a non-member drops the match. Doubles award the win and the set difference to every registered player on that side.
+- Rank is wins, then set difference. Elo is separate and is not used here.
+- Americano rounds live on `tournament_matches`, so they never enter the ladder.
+- Deleting a match removes it from the ladder because the ladder reads matches live. Invite-code collisions are retried; a non-owner cannot delete the group.
 
 ## Friendship model
 

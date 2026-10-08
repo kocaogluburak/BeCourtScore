@@ -28,6 +28,8 @@ type fakeStore struct {
 	clearCalled    bool
 	placeCalled    bool
 	fixturesCalled bool
+	plans          []MatchPlan
+	appended       []MatchPlan
 	deleteCalled   bool
 	champion       string
 	statusSet      string
@@ -77,8 +79,13 @@ func (f *fakeStore) setSeeds(_ context.Context, seeds []seedAssignment) error {
 func (f *fakeStore) listMine(_ context.Context, _ string, _ ListFilter, _, _ int) ([]Tournament, int64, error) {
 	return []Tournament{f.tournament}, 1, nil
 }
-func (f *fakeStore) replaceFixtures(context.Context, string, []MatchPlan) error {
+func (f *fakeStore) replaceFixtures(_ context.Context, _ string, plans []MatchPlan) error {
 	f.fixturesCalled = true
+	f.plans = plans
+	return nil
+}
+func (f *fakeStore) appendFixtures(_ context.Context, _ string, plans []MatchPlan) error {
+	f.appended = append(f.appended, plans...)
 	return nil
 }
 func (f *fakeStore) bracketMatches(context.Context, string) ([]TournamentMatch, error) {
@@ -98,8 +105,20 @@ func (f *fakeStore) clearReport(context.Context, string) error {
 	f.clearCalled = true
 	return nil
 }
-func (f *fakeStore) completeMatch(_ context.Context, _, _, _, _ string) error {
+func (f *fakeStore) completeMatch(_ context.Context, matchID, winnerID, score, _ string) error {
 	f.completeCalled = true
+	sc := score
+	for i := range f.matches {
+		if f.matches[i].ID != matchID {
+			continue
+		}
+		f.matches[i].Status = "COMPLETED"
+		f.matches[i].ScoreSummary = &sc
+		if winnerID != "" {
+			w := winnerID
+			f.matches[i].WinnerID = &w
+		}
+	}
 	return nil
 }
 func (f *fakeStore) placeIntoNext(context.Context, string, string) error {
@@ -539,4 +558,107 @@ func TestCreateTournament_DefaultCapsWhenOverQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = got
+}
+
+func TestDraw_AmericanoStoresPartners(t *testing.T) {
+	tt := lockedTournament()
+	tt.Format = "AMERICANO"
+	tt.CourtCount = 1
+	f := &fakeStore{
+		tournament: tt,
+		confirmed: []Participant{
+			{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"},
+		},
+	}
+	_, err := newService(f).Draw(context.Background(), "org", "t1", "MANUAL", []string{"p1", "p2", "p3", "p4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.plans) != 3 {
+		t.Fatalf("rounds=%d, want 3", len(f.plans))
+	}
+	if f.plans[0].A2 == "" || f.plans[0].B2 == "" {
+		t.Fatalf("partners missing: %+v", f.plans[0])
+	}
+}
+
+func TestSubmitResult_MexicanoAppendsNextRound(t *testing.T) {
+	a, b := "p1", "p3"
+	f := &fakeStore{
+		tournament: Tournament{ID: "t1", Format: "MEXICANO", CourtCount: 1, OrganizerID: "org"},
+		confirmed: []Participant{
+			{ID: "p1", DisplayName: "A"},
+			{ID: "p2", DisplayName: "B"},
+			{ID: "p3", DisplayName: "C"},
+			{ID: "p4", DisplayName: "D"},
+		},
+		md: matchDetail{
+			ID: "m1", TournamentID: "t1", Status: "READY", TournamentStatus: "ONGOING",
+			Format: "MEXICANO", OrganizerID: "org",
+			ParticipantAID: &a, ParticipantA2ID: sp("p2"),
+			ParticipantBID: &b, ParticipantB2ID: sp("p4"),
+		},
+		matches: []TournamentMatch{{
+			ID: "m1", Round: 1, Status: "READY",
+			ParticipantAID: &a, ParticipantA2ID: sp("p2"),
+			ParticipantBID: &b, ParticipantB2ID: sp("p4"),
+		}},
+		remaining: 1,
+	}
+	if _, err := newService(f).SubmitResult(context.Background(), "org", "m1", "", "16-12"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.appended) != 1 {
+		t.Fatalf("appended %d", len(f.appended))
+	}
+	next := f.appended[0]
+	if next.Round != 2 || next.A != "p1" || next.A2 != "p4" || next.B != "p2" || next.B2 != "p3" {
+		t.Fatalf("next pairing %+v", next)
+	}
+}
+
+func TestSubmitResult_KingOneCourtKeepsField(t *testing.T) {
+	a, b := "p1", "p3"
+	f := &fakeStore{
+		tournament: Tournament{ID: "t1", Format: "KING_OF_THE_COURT", CourtCount: 1, OrganizerID: "org"},
+		confirmed: []Participant{
+			{ID: "p1", DisplayName: "A"},
+			{ID: "p2", DisplayName: "B"},
+			{ID: "p3", DisplayName: "C"},
+			{ID: "p4", DisplayName: "D"},
+		},
+		md: matchDetail{
+			ID: "m1", TournamentID: "t1", Status: "READY", TournamentStatus: "ONGOING",
+			Format: "KING_OF_THE_COURT", OrganizerID: "org",
+			ParticipantAID: &a, ParticipantA2ID: sp("p4"),
+			ParticipantBID: &b, ParticipantB2ID: sp("p2"),
+		},
+		matches: []TournamentMatch{{
+			ID: "m1", Round: 1, PositionInRound: 0, Status: "READY",
+			ParticipantAID: &a, ParticipantA2ID: sp("p4"),
+			ParticipantBID: &b, ParticipantB2ID: sp("p2"),
+		}},
+		remaining: 1,
+	}
+	if _, err := newService(f).SubmitResult(context.Background(), "org", "m1", "", "16-10"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.appended) != 1 {
+		t.Fatalf("appended %d", len(f.appended))
+	}
+	got := map[string]bool{}
+	p := f.appended[0]
+	for _, id := range []string{p.A, p.A2, p.B, p.B2} {
+		got[id] = true
+	}
+	for _, id := range []string{"p1", "p2", "p3", "p4"} {
+		if !got[id] {
+			t.Fatalf("one court moved someone out: %+v", p)
+		}
+	}
+}
+
+func sp(s string) *string {
+	v := s
+	return &v
 }

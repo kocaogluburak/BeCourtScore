@@ -3,6 +3,7 @@ package social
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -24,12 +25,16 @@ type store interface {
 
 // Service is the social domain's business logic layer.
 type Service struct {
-	repo store
+	repo   store
+	groups groupStore
+	now    func() time.Time
+	code   func() string
 }
 
 // NewService creates a Service wired to the given Postgres pool.
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{repo: &repo{pool: pool}}
+	r := &repo{pool: pool}
+	return &Service{repo: r, groups: r}
 }
 
 // AreFriends reports whether two users have an accepted friendship.

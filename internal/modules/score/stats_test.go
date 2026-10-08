@@ -108,3 +108,26 @@ func TestAggregateHeadToHead_ViewerPerspective(t *testing.T) {
 		t.Fatalf("empty=%+v", empty)
 	}
 }
+
+func TestAggregateUserStats_DoublesPartnerCounts(t *testing.T) {
+	me, partner, opp, opp2 := "u1", "u2", "u3", "u4"
+	partnerName, opp2Name := "Partner", "Opp2"
+	matches := []Match{{
+		Sport: "PADEL", PlayerAName: "Me", PlayerBName: "Opp",
+		PlayerAUserID: &me, PlayerA2UserID: &partner, PlayerA2Name: &partnerName,
+		PlayerBUserID: &opp, PlayerB2UserID: &opp2, PlayerB2Name: &opp2Name,
+		SetsA: 2, SetsB: 1, WinnerSide: "A",
+	}}
+	got := aggregateUserStats(partner, "", matches)
+	if got.Matches != 1 || got.Wins != 1 || got.Losses != 0 {
+		t.Fatalf("partner stats=%+v", got)
+	}
+	if len(got.Rivals) != 2 {
+		t.Fatalf("rivals=%+v", got.Rivals)
+	}
+	for _, r := range got.Rivals {
+		if r.UserID == me {
+			t.Fatalf("same-side partner counted as rival: %+v", got.Rivals)
+		}
+	}
+}

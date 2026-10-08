@@ -30,6 +30,10 @@ type stubService struct {
 	rejectErr   error
 	listErr     error
 	unfriendErr error
+	group       Group
+	groupDetail GroupDetail
+	groups      []Group
+	groupErr    error
 }
 
 func (s *stubService) SearchUsers(_ context.Context, _, q string, _, _ int) ([]SearchResult, int64, error) {
@@ -70,6 +74,24 @@ func (s *stubService) ListIncomingRequests(_ context.Context, _ string, _, _ int
 }
 
 func (s *stubService) Unfriend(_ context.Context, _, _ string) error { return s.unfriendErr }
+
+func (s *stubService) ListGroups(context.Context, string) ([]Group, error) {
+	return s.groups, s.groupErr
+}
+func (s *stubService) CreateGroup(context.Context, string, string, string) (Group, error) {
+	return s.group, s.groupErr
+}
+func (s *stubService) JoinGroup(context.Context, string, string) (Group, error) {
+	return s.group, s.groupErr
+}
+func (s *stubService) GetGroup(context.Context, string, string) (GroupDetail, error) {
+	return s.groupDetail, s.groupErr
+}
+func (s *stubService) GetGroupByCode(context.Context, string, string) (GroupDetail, error) {
+	return s.groupDetail, s.groupErr
+}
+func (s *stubService) DeleteGroup(context.Context, string, string) error { return s.groupErr }
+func (s *stubService) LeaveGroup(context.Context, string, string) error  { return s.groupErr }
 
 func authedRequest(method, target string, body []byte, userID string) *http.Request {
 	var r *http.Request

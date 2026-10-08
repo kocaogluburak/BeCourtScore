@@ -31,19 +31,20 @@ GET    /v1/users/{id}/h2h      → viewer vs target H2H (?sport=); self → 400
 
 ## Stats rules
 
-- Count only when the target is a **registered participant** (`player_a_user_id` / `player_b_user_id`).
+- Count only when the target is a **registered participant** (`player_a_user_id` / `player_b_user_id` / `player_a2_user_id` / `player_b2_user_id`).
   Recorder-only rows (`created_by` alone) are ignored.
 - Visibility matches friend history: **self or accepted friend** → else 403.
 - `form`: last 5 outcomes from the subject's perspective (`W`/`L`), newest first.
 - `rivals`: top 5 registered opponents by match count (guest opponents excluded).
 - `by_sport`: always returned (all sports with ≥1 participant match), even when `?sport=` filters totals/form/rivals.
+- `rating`: Elo for the filtered sport on the top-level payload (starting value 1500). Each `by_sport` row also carries that sport's rating. Updated only for finished singles matches where both sides are exactly one registered user. Guests, doubles, and tournament social rounds (they are not history rows) do not move it. Deleting a match does not rewind the rating.
 - H2H numbers are from the **viewer's** perspective. Zero matches → 200 with zeros (not 404).
 - Set differential uses `sets_a` / `sets_b` (not per-game `set_scores`).
 
 ## Live routes
 
 ```
-POST   /v1/live-matches              → start; registered opponent → PENDING + invite, else IN_PROGRESS
+POST   /v1/live-matches              → start; any registered player except starter → PENDING + invite each, else IN_PROGRESS
 GET    /v1/live-matches              → open sessions, paginated
 GET    /v1/live-matches/{id}         → creator or registered participant
 PATCH  /v1/live-matches/{id}         → creator score snapshot
@@ -59,7 +60,9 @@ Open sessions with `updated_at` older than 24h are lazily expired (ENDED, no his
 ## Match body
 
 `sport` (TENNIS|PADEL|SQUASH|PING_PONG), `player_a_name`, `player_b_name`,
-optional `player_a_user_id` / `player_b_user_id` (guests stay name-only),
+optional `player_a_user_id` / `player_b_user_id` and doubles partners
+`player_a2_name` / `player_b2_name` / `player_a2_user_id` / `player_b2_user_id`
+(guests stay name-only),
 `sets_a`, `sets_b`, `winner_side` (A|B), optional `played_at` (RFC3339, default now).
 
 ## Data model / performance

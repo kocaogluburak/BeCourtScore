@@ -150,13 +150,15 @@ func TestStartLiveMatch_Conflict(t *testing.T) {
 	}
 }
 
-func TestOpponentUserID(t *testing.T) {
+func TestInviteeIDs(t *testing.T) {
 	opp := "opp"
-	m := LiveMatch{CreatedBy: "me", PlayerBUserID: &opp}
-	if got := opponentUserID("me", m); got != "opp" {
-		t.Fatalf("got %q", got)
+	partner := "partner"
+	m := LiveMatch{CreatedBy: "me", PlayerA2UserID: &partner, PlayerBUserID: &opp}
+	got := liveInvitees(m)
+	if len(got) != 2 || got[0] != "partner" || got[1] != "opp" {
+		t.Fatalf("got %v", got)
 	}
-	if got := opponentUserID("opp", m); got != "" {
-		t.Fatalf("expected empty when starter is opponent, got %q", got)
+	if len(inviteeIDs("opp", m.PlayerA2UserID, m.PlayerBUserID)) != 1 {
+		t.Fatal("starter excluded")
 	}
 }

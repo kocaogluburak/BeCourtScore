@@ -22,11 +22,13 @@ type fakePush struct {
 	calls int
 	last  string
 	typ   string
+	users []string
 }
 
 func (p *fakePush) SendToUser(_ context.Context, userID, _, _ string, data map[string]string) error {
 	p.calls++
 	p.last = userID
+	p.users = append(p.users, userID)
 	if data != nil {
 		p.typ = data["type"]
 	}
@@ -43,6 +45,7 @@ type fakeScoreStore struct {
 	ended      bool
 	historyID  string
 	openExists bool
+	ratings    map[string]lockedRating
 }
 
 func (f *fakeScoreStore) insert(_ context.Context, createdBy string, in CreateInput) (Match, error) {
@@ -56,8 +59,11 @@ func (f *fakeScoreStore) insert(_ context.Context, createdBy string, in CreateIn
 	m := Match{
 		ID: "hist-1", Sport: in.Sport, PlayerAName: in.PlayerAName, PlayerBName: in.PlayerBName,
 		PlayerAUserID: in.PlayerAUserID, PlayerBUserID: in.PlayerBUserID,
+		PlayerA2Name: in.PlayerA2Name, PlayerB2Name: in.PlayerB2Name,
+		PlayerA2UserID: in.PlayerA2UserID, PlayerB2UserID: in.PlayerB2UserID,
 		SetsA: in.SetsA, SetsB: in.SetsB, SetScores: scores, WinnerSide: in.WinnerSide, CreatedBy: createdBy,
 		PlayedAt: time.Now(), CreatedAt: time.Now(),
+		PointLog: in.PointLog, DurationSeconds: in.DurationSeconds,
 	}
 	f.match = m
 	f.historyID = m.ID
@@ -80,8 +86,7 @@ func (f *fakeScoreStore) listParticipantMatches(_ context.Context, userID, sport
 		if sport != "" && m.Sport != sport {
 			continue
 		}
-		if (m.PlayerAUserID != nil && *m.PlayerAUserID == userID) ||
-			(m.PlayerBUserID != nil && *m.PlayerBUserID == userID) {
+		if matchHasUser(m, userID) {
 			out = append(out, m)
 		}
 	}
@@ -94,14 +99,51 @@ func (f *fakeScoreStore) listH2HMatches(_ context.Context, userA, userB, sport s
 		if sport != "" && m.Sport != sport {
 			continue
 		}
-		a, b := m.PlayerAUserID, m.PlayerBUserID
-		if a == nil || b == nil {
-			continue
-		}
-		pair := (*a == userA && *b == userB) || (*a == userB && *b == userA)
-		if pair {
+		onA := idEq(m.PlayerAUserID, userA) || idEq(m.PlayerA2UserID, userA)
+		onB := idEq(m.PlayerBUserID, userB) || idEq(m.PlayerB2UserID, userB)
+		swapA := idEq(m.PlayerAUserID, userB) || idEq(m.PlayerA2UserID, userB)
+		swapB := idEq(m.PlayerBUserID, userA) || idEq(m.PlayerB2UserID, userA)
+		if (onA && onB) || (swapA && swapB) {
 			out = append(out, m)
 		}
+	}
+	return out, nil
+}
+
+func ratingKey(userID, sport string) string { return userID + "\x00" + sport }
+
+func (f *fakeScoreStore) applySinglesElo(_ context.Context, sport, winnerID, loserID string) error {
+	if f.ratings == nil {
+		f.ratings = map[string]lockedRating{}
+	}
+	firstID, secondID := winnerID, loserID
+	firstWon := true
+	if loserID < winnerID {
+		firstID, secondID = loserID, winnerID
+		firstWon = false
+	}
+	first := f.ratings[ratingKey(firstID, sport)]
+	second := f.ratings[ratingKey(secondID, sport)]
+	if first.rating == 0 {
+		first.rating = initialRating
+	}
+	if second.rating == 0 {
+		second.rating = initialRating
+	}
+	nextFirst, nextSecond := nextRatings(first.rating, second.rating, first.counted, second.counted, firstWon)
+	f.ratings[ratingKey(firstID, sport)] = lockedRating{rating: nextFirst, counted: first.counted + 1}
+	f.ratings[ratingKey(secondID, sport)] = lockedRating{rating: nextSecond, counted: second.counted + 1}
+	return nil
+}
+
+func (f *fakeScoreStore) listRatings(_ context.Context, userID string) ([]UserRating, error) {
+	out := []UserRating{}
+	prefix := userID + "\x00"
+	for key, row := range f.ratings {
+		if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
+			continue
+		}
+		out = append(out, UserRating{Sport: key[len(prefix):], Rating: row.rating, MatchesCounted: row.counted})
 	}
 	return out, nil
 }
@@ -118,7 +160,10 @@ func (f *fakeScoreStore) insertLive(_ context.Context, createdBy string, in Live
 		ID: "live-1", Sport: in.Sport, Status: status,
 		PlayerAName: in.PlayerAName, PlayerBName: in.PlayerBName,
 		PlayerAUserID: in.PlayerAUserID, PlayerBUserID: in.PlayerBUserID,
-		SetsToWin: in.SetsToWin, AdvantageEnabled: in.AdvantageEnabled, PointsToWin: in.PointsToWin,
+		PlayerA2Name: in.PlayerA2Name, PlayerB2Name: in.PlayerB2Name,
+		PlayerA2UserID: in.PlayerA2UserID, PlayerB2UserID: in.PlayerB2UserID,
+		SetsToWin: in.SetsToWin, SetRule: in.SetRule, FinalSet: in.FinalSet,
+		AdvantageEnabled: in.AdvantageEnabled, PointsToWin: in.PointsToWin,
 		CreatedBy: createdBy, StartedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	f.live = m
@@ -185,13 +230,7 @@ func (f *fakeScoreStore) listOpenLiveForParticipant(_ context.Context, userID st
 	if !open {
 		return nil, 0, nil
 	}
-	if f.live.CreatedBy == userID {
-		return []LiveMatch{f.live}, 1, nil
-	}
-	if f.live.PlayerAUserID != nil && *f.live.PlayerAUserID == userID {
-		return []LiveMatch{f.live}, 1, nil
-	}
-	if f.live.PlayerBUserID != nil && *f.live.PlayerBUserID == userID {
+	if f.live.CreatedBy == userID || (liveUserInSlots(userID, f.live) && !containsID(f.live.DeclinedUserIDs, userID)) {
 		return []LiveMatch{f.live}, 1, nil
 	}
 	return nil, 0, nil
@@ -209,6 +248,16 @@ func (f *fakeScoreStore) expireStaleLive(_ context.Context, olderThan time.Time)
 	f.ended = true
 	f.openExists = false
 	return []LiveMatch{m}, nil
+}
+
+func (f *fakeScoreStore) setDeclined(_ context.Context, _ string, userIDs []string) (LiveMatch, error) {
+	m := f.live
+	if m.Status != "PENDING" {
+		return LiveMatch{}, ErrWrongState
+	}
+	m.DeclinedUserIDs = append([]string{}, userIDs...)
+	f.live = m
+	return m, nil
 }
 
 func (f *fakeScoreStore) setShareToken(_ context.Context, _ string, token string) (LiveMatch, error) {
@@ -527,6 +576,46 @@ func TestDeclineLiveMatch(t *testing.T) {
 	}
 }
 
+func TestStartLiveMatch_DoublesInvitesEveryRegisteredPlayer(t *testing.T) {
+	partner, opp, opp2 := "p", "o1", "o2"
+	partnerName, opp2Name := "Partner", "Opp2"
+	store := &fakeScoreStore{}
+	push := &fakePush{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, push)
+	got, err := svc.StartLiveMatch(context.Background(), "u1", LiveStartInput{
+		Sport: "PADEL", PlayerAName: "A", PlayerBName: "B",
+		PlayerA2Name: &partnerName, PlayerA2UserID: &partner,
+		PlayerBUserID: &opp, PlayerB2Name: &opp2Name, PlayerB2UserID: &opp2,
+	})
+	if err != nil || got.Status != "PENDING" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	if push.calls != 3 || push.typ != "match.invite" {
+		t.Fatalf("push calls=%d users=%v typ=%q", push.calls, push.users, push.typ)
+	}
+}
+
+func TestDeclineLiveMatch_OneOfManyKeepsMatch(t *testing.T) {
+	partner, opp := "p", "o1"
+	partnerName := "Partner"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Status: "PENDING", CreatedBy: "u1",
+		PlayerA2Name: &partnerName, PlayerA2UserID: &partner, PlayerBUserID: &opp,
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	got, err := svc.DeclineLiveMatch(context.Background(), "p", "live-1")
+	if err != nil || got.Status != "PENDING" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	if !containsID(store.live.DeclinedUserIDs, "p") {
+		t.Fatalf("declined=%v", store.live.DeclinedUserIDs)
+	}
+	ended, err := svc.DeclineLiveMatch(context.Background(), "o1", "live-1")
+	if err != nil || ended.Status != "ENDED" {
+		t.Fatalf("got=%+v err=%v", ended, err)
+	}
+}
+
 func TestCreateMatch_Validation(t *testing.T) {
 	svc := newScoreService(&fakeScoreStore{}, &fakeFriends{}, nil)
 	_, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
@@ -630,6 +719,26 @@ func (g *fakeGate) MaxParticipants(context.Context, string) (int, error) {
 	return 8, nil
 }
 
+func TestCreateMatch_CapsPointLog(t *testing.T) {
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	points := make([]PointEvent, maxPointLog+25)
+	for i := range points {
+		points[i] = PointEvent{Side: "A", AtMs: int64(i)}
+	}
+	dur := 90
+	_, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+		PointLog: points, DurationSeconds: &dur,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.match.PointLog) != maxPointLog || store.match.DurationSeconds == nil || *store.match.DurationSeconds != 90 {
+		t.Fatalf("stored log=%d duration=%v", len(store.match.PointLog), store.match.DurationSeconds)
+	}
+}
+
 func TestCreateMatch_ProRequired(t *testing.T) {
 	svc := newScoreService(&fakeScoreStore{}, &fakeFriends{ok: true}, nil)
 	svc.SetGate(&fakeGate{err: entitlement.ErrProRequired})
@@ -661,5 +770,110 @@ func TestShareLiveMatch_ProRequired(t *testing.T) {
 	_, _, err := svc.ShareLiveMatch(context.Background(), "u1", "live-1")
 	if !errors.Is(err, entitlement.ErrProRequired) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCreateMatch_RatesRegisteredSingles(t *testing.T) {
+	a, b := "ua", "ub"
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{}, nil)
+	_, err := svc.CreateMatch(context.Background(), a, CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B",
+		PlayerAUserID: &a, PlayerBUserID: &b,
+		SetsA: 2, SetsB: 0, WinnerSide: "A",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.ratings[ratingKey(a, "TENNIS")].rating != 1516 || store.ratings[ratingKey(b, "TENNIS")].rating != 1484 {
+		t.Fatalf("ratings=%v", store.ratings)
+	}
+
+	_, err = svc.CreateMatch(context.Background(), a, CreateInput{
+		Sport: "PADEL", PlayerAName: "A", PlayerBName: "B",
+		PlayerAUserID: &a, PlayerBUserID: &b,
+		SetsA: 2, SetsB: 0, WinnerSide: "A",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.ratings[ratingKey(a, "TENNIS")].rating != 1516 {
+		t.Fatal("padel result changed tennis rating")
+	}
+	if store.ratings[ratingKey(a, "PADEL")].rating != 1516 {
+		t.Fatalf("padel=%d", store.ratings[ratingKey(a, "PADEL")].rating)
+	}
+}
+
+func TestCreateMatch_GuestAndDoublesSkipRating(t *testing.T) {
+	a := "ua"
+	partner := "Bea"
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{}, nil)
+	if _, err := svc.CreateMatch(context.Background(), a, CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "Guest",
+		PlayerAUserID: &a, SetsA: 2, SetsB: 0, WinnerSide: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b := "ub"
+	if _, err := svc.CreateMatch(context.Background(), a, CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B",
+		PlayerAUserID: &a, PlayerBUserID: &b, PlayerA2Name: &partner,
+		SetsA: 2, SetsB: 0, WinnerSide: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.ratings) != 0 {
+		t.Fatalf("ratings=%v", store.ratings)
+	}
+}
+
+func TestEndLiveMatch_RatesArchivedSingles(t *testing.T) {
+	a, b := "ua", "ub"
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Sport: "SQUASH", CreatedBy: a,
+		PlayerAName: "A", PlayerBName: "B",
+		PlayerAUserID: &a, PlayerBUserID: &b,
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	if _, err := svc.EndLiveMatch(context.Background(), a, "live-1", LiveEndInput{
+		SetsA: 3, SetsB: 1, WinnerSide: "B",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if store.ratings[ratingKey(b, "SQUASH")].rating != 1516 || store.ratings[ratingKey(a, "SQUASH")].rating != 1484 {
+		t.Fatalf("ratings=%v", store.ratings)
+	}
+}
+
+func TestGetUserStats_IncludesSportRating(t *testing.T) {
+	me, opp := "u1", "u2"
+	store := &fakeScoreStore{
+		matches: []Match{{
+			Sport: "TENNIS", PlayerAUserID: &me, PlayerBUserID: &opp,
+			PlayerAName: "Me", PlayerBName: "Opp", SetsA: 2, SetsB: 0, WinnerSide: "A",
+			PlayedAt: time.Now(),
+		}},
+		ratings: map[string]lockedRating{
+			ratingKey(me, "TENNIS"): {rating: 1516, counted: 1},
+			ratingKey(me, "PADEL"):  {rating: 1400, counted: 3},
+		},
+	}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	got, err := svc.GetUserStats(context.Background(), me, me, "TENNIS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Rating != 1516 {
+		t.Fatalf("rating=%d", got.Rating)
+	}
+	for _, s := range got.BySport {
+		if s.Sport == "PADEL" {
+			t.Fatalf("padel should not be in by_sport without matches: %+v", got.BySport)
+		}
+		if s.Sport == "TENNIS" && s.Rating != 1516 {
+			t.Fatalf("tennis by_sport=%+v", s)
+		}
 	}
 }

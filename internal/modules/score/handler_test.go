@@ -266,6 +266,29 @@ func TestListUserMatches_Returns403WhenNotFriends(t *testing.T) {
 
 // ── GET /v1/matches/{id} ─────────────────────────────────────────────────────
 
+func TestGetMatch_OldMatchWithoutPointLogReturns200(t *testing.T) {
+	svc := &stubService{match: baseMatch()}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getMatch(w, authedRequest(http.MethodGet, "/v1/matches/match-1", nil, "user-abc"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded["point_log"]; ok {
+		t.Fatalf("old match included point_log: %s", w.Body.String())
+	}
+	stats := Summarize(nil, nil)
+	if stats.TotalPoints != 0 || stats.HasServer {
+		t.Fatalf("detail stats: %+v", stats)
+	}
+}
+
 func TestGetMatch_Returns404WhenMissing(t *testing.T) {
 	svc := &stubService{getErr: ErrNotFound}
 	h := &handler{svc: svc}

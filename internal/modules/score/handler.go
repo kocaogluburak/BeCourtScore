@@ -43,16 +43,24 @@ func (h *handler) createMatch(w http.ResponseWriter, r *http.Request) {
 	userID, _ := authkit.UserIDFromCtx(r.Context())
 
 	var body struct {
-		Sport         string     `json:"sport"`
-		PlayerAName   string     `json:"player_a_name"`
-		PlayerBName   string     `json:"player_b_name"`
-		PlayerAUserID *string    `json:"player_a_user_id"`
-		PlayerBUserID *string    `json:"player_b_user_id"`
-		SetsA         int        `json:"sets_a"`
-		SetsB         int        `json:"sets_b"`
-		SetScores     []SetScore `json:"set_scores"`
-		WinnerSide    string     `json:"winner_side"`
-		PlayedAt      *time.Time `json:"played_at"`
+		Sport          string     `json:"sport"`
+		PlayerAName    string     `json:"player_a_name"`
+		PlayerBName    string     `json:"player_b_name"`
+		PlayerAUserID  *string    `json:"player_a_user_id"`
+		PlayerBUserID  *string    `json:"player_b_user_id"`
+		PlayerA2Name   *string    `json:"player_a2_name"`
+		PlayerB2Name   *string    `json:"player_b2_name"`
+		PlayerA2UserID *string    `json:"player_a2_user_id"`
+		PlayerB2UserID *string    `json:"player_b2_user_id"`
+		SetsA          int        `json:"sets_a"`
+		SetsB          int        `json:"sets_b"`
+		SetScores      []SetScore `json:"set_scores"`
+		WinnerSide     string     `json:"winner_side"`
+		SetRule         string       `json:"set_rule"`
+		FinalSet        string       `json:"final_set"`
+		PlayedAt        *time.Time   `json:"played_at"`
+		PointLog        []PointEvent `json:"point_log"`
+		DurationSeconds *int         `json:"duration_seconds"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body")
@@ -60,16 +68,24 @@ func (h *handler) createMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m, err := h.svc.CreateMatch(r.Context(), userID, CreateInput{
-		Sport:         body.Sport,
-		PlayerAName:   body.PlayerAName,
-		PlayerBName:   body.PlayerBName,
-		PlayerAUserID: body.PlayerAUserID,
-		PlayerBUserID: body.PlayerBUserID,
-		SetsA:         body.SetsA,
-		SetsB:         body.SetsB,
-		SetScores:     body.SetScores,
-		WinnerSide:    body.WinnerSide,
-		PlayedAt:      body.PlayedAt,
+		Sport:          body.Sport,
+		PlayerAName:    body.PlayerAName,
+		PlayerBName:    body.PlayerBName,
+		PlayerAUserID:  body.PlayerAUserID,
+		PlayerBUserID:  body.PlayerBUserID,
+		PlayerA2Name:   body.PlayerA2Name,
+		PlayerB2Name:   body.PlayerB2Name,
+		PlayerA2UserID: body.PlayerA2UserID,
+		PlayerB2UserID: body.PlayerB2UserID,
+		SetsA:          body.SetsA,
+		SetsB:          body.SetsB,
+		SetScores:      body.SetScores,
+		WinnerSide:     body.WinnerSide,
+		SetRule:         body.SetRule,
+		FinalSet:        body.FinalSet,
+		PlayedAt:        body.PlayedAt,
+		PointLog:        body.PointLog,
+		DurationSeconds: body.DurationSeconds,
 	})
 	if err != nil {
 		if errors.Is(err, ErrInvalid) {
