@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -184,6 +185,20 @@ func (f *fakeGroups) listMembers(_ context.Context, groupID string) ([]GroupMemb
 
 func (f *fakeGroups) listWeekMatches(context.Context, string, string, time.Time, time.Time) ([]ladderMatch, error) {
 	return f.matches, nil
+}
+
+func TestCreateGroup_RejectsBlankLongNameAndUnknownSport(t *testing.T) {
+	svc := &Service{groups: newFakeGroups(), code: func() string { return "CODE" }}
+	if _, err := svc.CreateGroup(context.Background(), "u1", "   ", "TENNIS"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank err=%v", err)
+	}
+	long := strings.Repeat("a", 41)
+	if _, err := svc.CreateGroup(context.Background(), "u1", long, "TENNIS"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("long err=%v", err)
+	}
+	if _, err := svc.CreateGroup(context.Background(), "u1", "Club", "BADMINTON"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("sport err=%v", err)
+	}
 }
 
 func TestCreateGroup_RetriesInviteCodeCollision(t *testing.T) {

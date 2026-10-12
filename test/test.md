@@ -25,12 +25,13 @@ make test
 | `internal/modules/tournament/*_test.go` | lifecycle, bracket, Americano rotation, Mexicano re-pair, King of the Court movement, point standings |
 | `internal/modules/social/handler_test.go` | search, profile, send/accept/reject/list/unfriend, group create/delete |
 | `internal/modules/social/service_test.go` | request state machine, reopen-after-reject, AreFriends, profile status |
-| `internal/modules/social/groups_test.go` | ISO week window, non-member match ignored, member match counted, invite-code collision, non-owner cannot delete |
+| `internal/modules/social/groups_test.go` | ISO week window, non-member match ignored, member match counted, invite-code collision, blank/long name and unknown sport rejected, non-owner cannot delete |
 | `internal/modules/score/handler_test.go` | match CRUD + friendship gate + stats/h2h handlers |
 | `internal/modules/score/live_handler_test.go` | live match start/get/update/end/list/cancel/accept/decline + conflict |
 | `internal/modules/score/format_test.go` | set_rule / final_set defaults and unknown values |
 | `internal/modules/score/pointlog_test.go` | duration, serve game, break conversion, golden break, old match omits point_log |
-| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, duplicate open 409, accept/decline, opponent cancel IN_PROGRESS, stale 24h expire, participant list, push invite, stats/h2h gates |
+| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, guest opponent is not invited, duplicate open 409, accept/decline, opponent cancel IN_PROGRESS, stale 24h expire, participant list, push invite, doubles invite body, non-friend partner sends nothing, stats/h2h gates |
+| `internal/modules/score/players_test.go` | side label, identical names kept, invitee list skips starter/blank/duplicate, nameless partner rejected |
 | `internal/modules/score/stats_test.go` | W/L form, rivals, sport filter, recorder-only ignored, H2H viewer perspective, doubles partner |
 | `internal/modules/score/elo_test.go` | Elo +16 from 1500, K after 20, guest/doubles skipped, sports stay separate |
 | `internal/modules/notify/handler_test.go` | device register + unregister |

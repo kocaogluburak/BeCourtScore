@@ -3,6 +3,7 @@ package score
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,16 +20,18 @@ func (f *fakeFriends) AreFriends(context.Context, string, string) (bool, error) 
 }
 
 type fakePush struct {
-	calls int
-	last  string
-	typ   string
-	users []string
+	calls  int
+	last   string
+	typ    string
+	users  []string
+	bodies []string
 }
 
-func (p *fakePush) SendToUser(_ context.Context, userID, _, _ string, data map[string]string) error {
+func (p *fakePush) SendToUser(_ context.Context, userID, _, body string, data map[string]string) error {
 	p.calls++
 	p.last = userID
 	p.users = append(p.users, userID)
+	p.bodies = append(p.bodies, body)
 	if data != nil {
 		p.typ = data["type"]
 	}
@@ -592,6 +595,58 @@ func TestStartLiveMatch_DoublesInvitesEveryRegisteredPlayer(t *testing.T) {
 	}
 	if push.calls != 3 || push.typ != "match.invite" {
 		t.Fatalf("push calls=%d users=%v typ=%q", push.calls, push.users, push.typ)
+	}
+	for _, id := range push.users {
+		if id == "u1" {
+			t.Fatalf("starter was invited: %v", push.users)
+		}
+	}
+	for _, body := range push.bodies {
+		if body != "A / Partner vs B / Opp2 — accept to watch the score" {
+			t.Fatalf("body=%q", body)
+		}
+		if strings.Contains(body, "null") || strings.Contains(body, " /  /") {
+			t.Fatalf("broken label in %q", body)
+		}
+	}
+}
+
+func TestStartLiveMatch_PartnerNotFriendSendsNoInvite(t *testing.T) {
+	partner := "p"
+	name := "Partner"
+	store := &fakeScoreStore{}
+	push := &fakePush{}
+	svc := newScoreService(store, &fakeFriends{ok: false}, push)
+	_, err := svc.StartLiveMatch(context.Background(), "u1", LiveStartInput{
+		Sport: "PADEL", PlayerAName: "A", PlayerBName: "B",
+		PlayerA2Name: &name, PlayerA2UserID: &partner,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err=%v", err)
+	}
+	if push.calls != 0 {
+		t.Fatalf("partial invite calls=%d", push.calls)
+	}
+}
+
+func TestStartLiveMatch_GuestOpponentIsNotInvited(t *testing.T) {
+	partner := "p"
+	name := "Cara"
+	store := &fakeScoreStore{}
+	push := &fakePush{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, push)
+	got, err := svc.StartLiveMatch(context.Background(), "u1", LiveStartInput{
+		Sport: "PADEL", PlayerAName: "Ada", PlayerBName: "Guest",
+		PlayerA2Name: &name, PlayerA2UserID: &partner,
+	})
+	if err != nil || got.Status != "PENDING" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	if len(push.users) != 1 || push.users[0] != "p" {
+		t.Fatalf("users=%v", push.users)
+	}
+	if push.bodies[0] != "Ada / Cara vs Guest — accept to watch the score" {
+		t.Fatalf("body=%q", push.bodies[0])
 	}
 }
 
