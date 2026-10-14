@@ -20,24 +20,26 @@ type PlayVerifier struct {
 	svc *androidpublisher.Service
 }
 
-func newPlayVerifierFromEnv() *PlayVerifier {
+// newPlayVerifierFromEnv loads the Play Developer API client.
+// A nil verifier with a nil error means the credentials are unset.
+func newPlayVerifierFromEnv() (*PlayVerifier, error) {
 	raw := strings.TrimSpace(os.Getenv("PLAY_SERVICE_ACCOUNT_JSON_CONTENT"))
 	if raw == "" {
 		path := strings.TrimSpace(os.Getenv("PLAY_SERVICE_ACCOUNT_JSON"))
 		if path == "" {
-			return nil
+			return nil, nil
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		raw = string(b)
 	}
 	svc, err := androidpublisher.NewService(context.Background(), option.WithCredentialsJSON([]byte(raw)))
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return &PlayVerifier{svc: svc}
+	return &PlayVerifier{svc: svc}, nil
 }
 
 func (p *PlayVerifier) VerifyGoogle(ctx context.Context, purchaseToken, productID string) (VerifiedSub, error) {

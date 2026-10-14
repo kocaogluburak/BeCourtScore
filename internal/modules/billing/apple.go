@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -37,8 +38,18 @@ func (c *CompositeVerifier) VerifyApple(ctx context.Context, signedTransaction s
 }
 
 // NewVerifierFromEnv returns a StoreVerifier, or nil when neither store is configured.
+// Apple JWS decode is always available; Play stays nil until a service-account JSON is set.
 func NewVerifierFromEnv() StoreVerifier {
-	play := newPlayVerifierFromEnv()
+	play, err := newPlayVerifierFromEnv()
+	if play == nil {
+		if err != nil {
+			slog.Warn("billing: Play verifier unavailable", "err", err)
+		} else {
+			slog.Warn("billing: Play verifier unavailable")
+		}
+	} else {
+		slog.Info("billing: Play verifier ready")
+	}
 	apple := newAppleVerifierFromEnv()
 	if play == nil && apple == nil {
 		return nil
