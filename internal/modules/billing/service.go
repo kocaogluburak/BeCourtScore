@@ -105,6 +105,14 @@ func (s *Service) AllowStats(ctx context.Context, userID string) error {
 	return s.requireQuota(ctx, userID)
 }
 
+func (s *Service) AllowAdvancedStats(ctx context.Context, userID string) error {
+	return s.requirePro(ctx, userID)
+}
+
+func (s *Service) AllowEquipment(ctx context.Context, userID string) error {
+	return s.requirePro(ctx, userID)
+}
+
 func (s *Service) AllowPublicLive(ctx context.Context, userID string) error {
 	return s.requireQuota(ctx, userID)
 }
@@ -116,12 +124,42 @@ func (s *Service) AllowLargeTournament(ctx context.Context, userID string, maxPa
 	return s.requireQuota(ctx, userID)
 }
 
+func (s *Service) AllowLargeLeague(ctx context.Context, userID string, memberCount int) error {
+	if memberCount < entitlement.FreeMaxLeagueMembers {
+		return nil
+	}
+	return s.requireQuota(ctx, userID)
+}
+
+func (s *Service) AllowSeasonArchive(ctx context.Context, userID string) error {
+	return s.requireQuota(ctx, userID)
+}
+
 func (s *Service) MaxParticipants(ctx context.Context, userID string) (int, error) {
 	snap, err := s.Load(ctx, userID)
 	if err != nil {
 		return entitlement.FreeMaxParticipants, err
 	}
 	return snap.MaxTournamentParticipants, nil
+}
+
+func (s *Service) IsPro(ctx context.Context, userID string) (bool, error) {
+	snap, err := s.Load(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return snap.IsPro, nil
+}
+
+func (s *Service) requirePro(ctx context.Context, userID string) error {
+	snap, err := s.Load(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if snap.IsPro {
+		return nil
+	}
+	return entitlement.ErrProRequired
 }
 
 func (s *Service) requireQuota(ctx context.Context, userID string) error {

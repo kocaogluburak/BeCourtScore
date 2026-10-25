@@ -34,6 +34,10 @@ type stubService struct {
 	groupDetail GroupDetail
 	groups      []Group
 	groupErr    error
+	seasons     []SeasonSummary
+	season      SeasonDetail
+	seasonTotal int64
+	seasonErr   error
 }
 
 func (s *stubService) SearchUsers(_ context.Context, _, q string, _, _ int) ([]SearchResult, int64, error) {
@@ -92,6 +96,21 @@ func (s *stubService) GetGroupByCode(context.Context, string, string) (GroupDeta
 }
 func (s *stubService) DeleteGroup(context.Context, string, string) error { return s.groupErr }
 func (s *stubService) LeaveGroup(context.Context, string, string) error  { return s.groupErr }
+func (s *stubService) ListSeasons(context.Context, string, string, int, int) ([]SeasonSummary, int64, error) {
+	return s.seasons, s.seasonTotal, s.seasonErr
+}
+func (s *stubService) GetCurrentSeason(context.Context, string, string) (SeasonDetail, error) {
+	return s.season, s.seasonErr
+}
+func (s *stubService) GetSeason(context.Context, string, string, string) (SeasonDetail, error) {
+	return s.season, s.seasonErr
+}
+func (s *stubService) StartSeason(context.Context, string, string, SeasonConfig) (SeasonDetail, error) {
+	return s.season, s.seasonErr
+}
+func (s *stubService) FinalizeSeason(context.Context, string, string, string) (SeasonDetail, error) {
+	return s.season, s.seasonErr
+}
 
 func authedRequest(method, target string, body []byte, userID string) *http.Request {
 	var r *http.Request

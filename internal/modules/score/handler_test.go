@@ -17,19 +17,31 @@ import (
 // ── stub service ─────────────────────────────────────────────────────────────
 
 type stubService struct {
-	match     Match
-	live      LiveMatch
-	matches   []Match
-	total     int64
-	stats     UserStats
-	h2h       HeadToHead
-	createErr error
-	listErr   error
-	getErr    error
-	deleteErr error
-	liveErr   error
-	statsErr  error
-	h2hErr    error
+	match      Match
+	live       LiveMatch
+	matches    []Match
+	total      int64
+	stats      UserStats
+	h2h        HeadToHead
+	trend         []FitnessTrendPoint
+	wrapped       WrappedReport
+	wrappedErr    error
+	gotYear       int
+	lastCreate    CreateInput
+	lastEnd       LiveEndInput
+	createErr     error
+	listErr       error
+	getErr        error
+	pointStats    MatchPointStats
+	pointStatsErr error
+	deleteErr     error
+	liveErr       error
+	statsErr      error
+	h2hErr        error
+	trendErr      error
+	rematch    RematchChallenge
+	prefill    RematchPrefill
+	rematchErr error
 
 	gotLimit  int
 	gotOffset int
@@ -39,9 +51,15 @@ func (s *stubService) CreateMatch(_ context.Context, userID string, in CreateInp
 	if s.createErr != nil {
 		return Match{}, s.createErr
 	}
+	s.lastCreate = in
 	m := s.match
 	m.CreatedBy = userID
 	m.Sport = in.Sport
+	m.AvgHeartRate = in.AvgHeartRate
+	m.MaxHeartRate = in.MaxHeartRate
+	m.ActiveCalories = in.ActiveCalories
+	m.FitnessSource = in.FitnessSource
+	m.FitnessSamples = in.FitnessSamples
 	return m, nil
 }
 
@@ -57,6 +75,13 @@ func (s *stubService) ListUserMatches(_ context.Context, _, _ string, _ ListFilt
 
 func (s *stubService) GetMatch(_ context.Context, _, _ string) (Match, error) {
 	return s.match, s.getErr
+}
+
+func (s *stubService) GetMatchPointStats(_ context.Context, _, _ string) (MatchPointStats, error) {
+	if s.pointStatsErr != nil {
+		return MatchPointStats{}, s.pointStatsErr
+	}
+	return s.pointStats, nil
 }
 
 func (s *stubService) DeleteMatch(_ context.Context, _, _ string) error { return s.deleteErr }
@@ -86,8 +111,16 @@ func (s *stubService) UpdateLiveMatch(_ context.Context, _, _ string, _ LiveScor
 	return s.live, s.liveErr
 }
 
-func (s *stubService) EndLiveMatch(_ context.Context, _, _ string, _ LiveEndInput) (LiveMatch, error) {
+func (s *stubService) EndLiveMatch(_ context.Context, _, _ string, in LiveEndInput) (LiveMatch, error) {
+	s.lastEnd = in
 	return s.live, s.liveErr
+}
+
+func (s *stubService) GetFitnessTrend(_ context.Context, _, _, _ string) ([]FitnessTrendPoint, error) {
+	if s.trendErr != nil {
+		return nil, s.trendErr
+	}
+	return s.trend, nil
 }
 
 func (s *stubService) ListMyOpenLiveMatches(_ context.Context, _ string, limit, offset int) ([]LiveMatch, int64, error) {
@@ -142,6 +175,17 @@ func (s *stubService) GetHeadToHead(_ context.Context, _, _, _ string) (HeadToHe
 	return s.h2h, nil
 }
 
+func (s *stubService) GetWrapped(_ context.Context, _ string, year int) (WrappedReport, error) {
+	s.gotYear = year
+	if s.wrappedErr != nil {
+		return WrappedReport{}, s.wrappedErr
+	}
+	if s.wrapped.Year == 0 {
+		s.wrapped.Year = year
+	}
+	return s.wrapped, nil
+}
+
 func (s *stubService) ShareLiveMatch(_ context.Context, _, _ string) (string, string, error) {
 	if s.liveErr != nil {
 		return "", "", s.liveErr
@@ -151,6 +195,68 @@ func (s *stubService) ShareLiveMatch(_ context.Context, _, _ string) (string, st
 
 func (s *stubService) GetLiveByShareToken(_ context.Context, _ string) (LiveMatch, error) {
 	return s.live, s.liveErr
+}
+
+func (s *stubService) CreateRematch(_ context.Context, userID string, in RematchCreateInput) (RematchChallenge, error) {
+	if s.rematchErr != nil {
+		return RematchChallenge{}, s.rematchErr
+	}
+	ch := s.rematch
+	if ch.ID == "" {
+		ch.ID = "rm-1"
+	}
+	ch.ChallengerID = userID
+	ch.OpponentID = in.OpponentID
+	ch.Sport = in.Sport
+	ch.Status = "pending"
+	return ch, nil
+}
+
+func (s *stubService) ListIncomingRematches(_ context.Context, _ string, limit, offset int) ([]RematchChallenge, int64, error) {
+	s.gotLimit, s.gotOffset = limit, offset
+	if s.rematchErr != nil {
+		return nil, 0, s.rematchErr
+	}
+	if s.rematch.ID == "" {
+		return nil, 0, nil
+	}
+	return []RematchChallenge{s.rematch}, 1, nil
+}
+
+func (s *stubService) ListOutgoingRematches(_ context.Context, _ string, limit, offset int) ([]RematchChallenge, int64, error) {
+	s.gotLimit, s.gotOffset = limit, offset
+	if s.rematchErr != nil {
+		return nil, 0, s.rematchErr
+	}
+	if s.rematch.ID == "" {
+		return nil, 0, nil
+	}
+	return []RematchChallenge{s.rematch}, 1, nil
+}
+
+func (s *stubService) AcceptRematch(_ context.Context, _, _ string) (RematchPrefill, error) {
+	if s.rematchErr != nil {
+		return RematchPrefill{}, s.rematchErr
+	}
+	return s.prefill, nil
+}
+
+func (s *stubService) RejectRematch(_ context.Context, _, _ string) (RematchChallenge, error) {
+	if s.rematchErr != nil {
+		return RematchChallenge{}, s.rematchErr
+	}
+	ch := s.rematch
+	ch.Status = "rejected"
+	return ch, nil
+}
+
+func (s *stubService) CancelRematch(_ context.Context, _, _ string) (RematchChallenge, error) {
+	if s.rematchErr != nil {
+		return RematchChallenge{}, s.rematchErr
+	}
+	ch := s.rematch
+	ch.Status = "cancelled"
+	return ch, nil
 }
 
 func authedRequest(method, target string, body []byte, userID string) *http.Request {
@@ -313,6 +419,61 @@ func TestGetMatch_Returns403WhenNoAccess(t *testing.T) {
 	}
 }
 
+func TestGetMatchPointStats_Returns200ForPro(t *testing.T) {
+	svc := &stubService{pointStats: MatchPointStats{AcesA: 2, WinnersB: 1, TaggedPoints: 3}}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getMatchPointStats(w, authedRequest(http.MethodGet, "/v1/matches/match-1/stats", nil, "user-abc"))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got MatchPointStats
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.AcesA != 2 || got.WinnersB != 1 || got.TaggedPoints != 3 {
+		t.Fatalf("stats: %+v", got)
+	}
+}
+
+func TestGetMatchPointStats_Returns402WhenNotPro(t *testing.T) {
+	svc := &stubService{pointStatsErr: entitlement.ErrProRequired}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getMatchPointStats(w, authedRequest(http.MethodGet, "/v1/matches/match-1/stats", nil, "user-abc"))
+
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("status: got %d, want 402", w.Code)
+	}
+}
+
+func TestGetMatchPointStats_Returns403WhenNoAccess(t *testing.T) {
+	svc := &stubService{pointStatsErr: ErrForbidden}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getMatchPointStats(w, authedRequest(http.MethodGet, "/v1/matches/private/stats", nil, "stranger"))
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status: got %d, want 403", w.Code)
+	}
+}
+
+func TestGetMatchPointStats_Returns404WhenMissing(t *testing.T) {
+	svc := &stubService{pointStatsErr: ErrNotFound}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.getMatchPointStats(w, authedRequest(http.MethodGet, "/v1/matches/nope/stats", nil, "user-abc"))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", w.Code)
+	}
+}
+
 // ── DELETE /v1/matches/{id} ──────────────────────────────────────────────────
 
 func TestDeleteMatch_Returns204(t *testing.T) {
@@ -431,5 +592,65 @@ func TestGetHeadToHead_Returns403WhenNotFriends(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status: got %d, want 403", w.Code)
+	}
+}
+
+func TestCreateMatch_RoundTripsFitnessFields(t *testing.T) {
+	svc := &stubService{match: baseMatch()}
+	h := &handler{svc: svc}
+	src := "apple_watch"
+	hr := 141
+	body, _ := json.Marshal(map[string]any{
+		"sport": "TENNIS", "player_a_name": "Ada", "player_b_name": "Grace",
+		"sets_a": 2, "sets_b": 1, "winner_side": "A",
+		"avg_heart_rate": 141, "max_heart_rate": 178, "active_calories": 62,
+		"fitness_source": src,
+		"fitness_samples": []map[string]any{{"t": 30, "hr": 141, "kcal": 10}},
+	})
+	w := httptest.NewRecorder()
+	h.createMatch(w, authedRequest(http.MethodPost, "/v1/matches", body, "user-abc"))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if svc.lastCreate.AvgHeartRate == nil || *svc.lastCreate.AvgHeartRate != hr {
+		t.Fatalf("create input=%+v", svc.lastCreate)
+	}
+	var got Match
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.AvgHeartRate == nil || *got.AvgHeartRate != 141 || len(got.FitnessSamples) != 1 {
+		t.Fatalf("response=%+v", got)
+	}
+}
+
+func TestGetFitnessTrend_HandlerStatuses(t *testing.T) {
+	h := &handler{svc: &stubService{trendErr: entitlement.ErrProRequired}}
+	w := httptest.NewRecorder()
+	h.getFitnessTrend(w, authedRequest(http.MethodGet, "/v1/users/user-abc/fitness-trend", nil, "user-abc"))
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("status=%d want 402", w.Code)
+	}
+
+	h = &handler{svc: &stubService{trendErr: ErrForbidden}}
+	w = httptest.NewRecorder()
+	h.getFitnessTrend(w, authedRequest(http.MethodGet, "/v1/users/other/fitness-trend", nil, "user-abc"))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status=%d want 403", w.Code)
+	}
+
+	h = &handler{svc: &stubService{trend: []FitnessTrendPoint{{MatchID: "m1", AvgHeartRate: intPtr(130)}}}}
+	w = httptest.NewRecorder()
+	h.getFitnessTrend(w, authedRequest(http.MethodGet, "/v1/users/user-abc/fitness-trend", nil, "user-abc"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	items, ok := decoded["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items=%v", decoded["items"])
 	}
 }

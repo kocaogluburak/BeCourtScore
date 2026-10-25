@@ -11,10 +11,10 @@ the sender is a no-op (`NoopSender`) so local/dev still boots.
 |------|------|
 | `routes.go` | Mounts `/v1/devices` (Bearer) |
 | `handler.go` | Register + unregister |
-| `service.go` | Upsert/delete tokens; `SendToUser` fan-out |
+| `service.go` | Upsert/delete tokens; `SendToUser` + `SendLocalizedToUser` fan-out |
 | `repo.go` | Postgres `device_tokens` |
-| `fcm.go` | FCM HTTP v1 sender; `NewFCMSenderFromEnv` → Noop if unset |
-| `*_test.go` | handler, service, fcm env fallback |
+| `fcm.go` | FCM HTTP v1 sender; APNs loc-key / Android data-only localized path |
+| `*_test.go` | handler, service, fcm env fallback, localized skip-web |
 
 ## Routes
 
@@ -25,10 +25,12 @@ DELETE /v1/devices/{token}   → 204 (token URL-encoded)
 
 ## Who sends
 
-Other modules call `notify.Service.SendToUser` (implements `score.PushSender`):
+Other modules call `notify.Service.SendToUser` (implements `score.PushSender`)
+and `SendLocalizedToUser` (implements `achievements.LocalizedPusher`):
 
 - Live invite / accept (`score`)
 - Friend request received / accepted (`social`)
+- Weekly goal reminder (`achievements`) — iOS loc-key / Android data `type=goal.reminder`
 
 Best-effort: push failure must not fail the HTTP handler.
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"courtscore/internal/platform/entitlement"
+	"courtscore/internal/platform/sse"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,22 +27,33 @@ type store interface {
 
 // Service is the social domain's business logic layer.
 type Service struct {
-	repo   store
-	groups groupStore
-	now    func() time.Time
-	code   func() string
+	repo    store
+	groups  groupStore
+	seasons seasonStore
+	hub     *sse.Hub
+	gate    entitlement.Gate
+	now     func() time.Time
+	code    func() string
 }
 
 // NewService creates a Service wired to the given Postgres pool.
 func NewService(pool *pgxpool.Pool) *Service {
 	r := &repo{pool: pool}
-	return &Service{repo: r, groups: r}
+	return &Service{repo: r, groups: r, seasons: r}
 }
+
+func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }
+func (s *Service) SetHub(h *sse.Hub)          { s.hub = h }
 
 // AreFriends reports whether two users have an accepted friendship.
 // Also implements score.FriendChecker.
 func (s *Service) AreFriends(ctx context.Context, a, b string) (bool, error) {
 	return s.repo.areFriends(ctx, a, b)
+}
+
+// UserSummaryByID returns the public projection of a user (no email).
+func (s *Service) UserSummaryByID(ctx context.Context, id string) (UserSummary, error) {
+	return s.repo.getUserSummary(ctx, id)
 }
 
 // SearchUsers finds users by nickname/name/surname prefix or exact email.

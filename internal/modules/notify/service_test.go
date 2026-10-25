@@ -8,12 +8,13 @@ import (
 )
 
 type fakeNotifyStore struct {
-	token     DeviceToken
-	tokens    []string
-	upsertErr error
-	deleteErr error
-	listErr   error
-	deleted   string
+	token          DeviceToken
+	tokens         []string
+	platformTokens []PlatformToken
+	upsertErr      error
+	deleteErr      error
+	listErr        error
+	deleted        string
 }
 
 func (f *fakeNotifyStore) upsert(_ context.Context, userID, token, platform string) (DeviceToken, error) {
@@ -40,13 +41,35 @@ func (f *fakeNotifyStore) tokensForUser(context.Context, string) ([]string, erro
 	return f.tokens, f.listErr
 }
 
+func (f *fakeNotifyStore) tokensWithPlatform(context.Context, string) ([]PlatformToken, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	if len(f.platformTokens) > 0 {
+		return f.platformTokens, nil
+	}
+	out := make([]PlatformToken, 0, len(f.tokens))
+	for _, t := range f.tokens {
+		out = append(out, PlatformToken{Token: t, Platform: "android"})
+	}
+	return out, nil
+}
+
 type recordingSender struct {
-	tokens []string
-	err    error
+	tokens          []string
+	localizedTokens []PlatformToken
+	localized       LocalizedPush
+	err             error
 }
 
 func (r *recordingSender) Send(_ context.Context, tokens []string, _, _ string, _ map[string]string) error {
 	r.tokens = append([]string{}, tokens...)
+	return r.err
+}
+
+func (r *recordingSender) SendLocalized(_ context.Context, tokens []PlatformToken, msg LocalizedPush) error {
+	r.localizedTokens = append([]PlatformToken{}, tokens...)
+	r.localized = msg
 	return r.err
 }
 
@@ -94,5 +117,26 @@ func TestSendToUser_BestEffort(t *testing.T) {
 	svc = &Service{repo: &fakeNotifyStore{listErr: errors.New("db")}, sender: sender}
 	if err := svc.SendToUser(context.Background(), "u1", "hi", "body", nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSendLocalizedToUser_SkipsWebAndFansOut(t *testing.T) {
+	sender := &recordingSender{}
+	store := &fakeNotifyStore{platformTokens: []PlatformToken{
+		{Token: "ios1", Platform: "ios"},
+		{Token: "web1", Platform: "web"},
+		{Token: "and1", Platform: "android"},
+	}}
+	svc := &Service{repo: store, sender: sender}
+	if err := svc.SendLocalizedToUser(context.Background(), "u1", "goal.reminder",
+		"goal_reminder_push_title", "goal_reminder_push_body",
+		[]string{"1", "2"}, map[string]string{"type": "goal.reminder"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.localizedTokens) != 2 {
+		t.Fatalf("tokens=%v", sender.localizedTokens)
+	}
+	if sender.localized.TitleLocKey != "goal_reminder_push_title" || sender.localized.Type != "goal.reminder" {
+		t.Fatalf("msg=%+v", sender.localized)
 	}
 }

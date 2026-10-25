@@ -56,16 +56,28 @@ func (r *repo) delete(ctx context.Context, userID, token string) error {
 }
 
 func (r *repo) tokensForUser(ctx context.Context, userID string) ([]string, error) {
+	toks, err := r.tokensWithPlatform(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(toks))
+	for _, t := range toks {
+		out = append(out, t.Token)
+	}
+	return out, nil
+}
+
+func (r *repo) tokensWithPlatform(ctx context.Context, userID string) ([]PlatformToken, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT token FROM device_tokens WHERE user_id = $1`, userID)
+		`SELECT token, platform FROM device_tokens WHERE user_id = $1`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []PlatformToken
 	for rows.Next() {
-		var t string
-		if err := rows.Scan(&t); err != nil {
+		var t PlatformToken
+		if err := rows.Scan(&t.Token, &t.Platform); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

@@ -22,6 +22,7 @@ rotation, the current-user profile (`/v1/me`), and mounts the SSE stream (`/v1/e
 
 ```
 POST   /v1/auth/{provider}   → verify id_token, upsert user, return {access_token, refresh_token, user, is_new_user}
+                                 optional body `invite_code` attributes a new user via invite.RecordSignup
 POST   /v1/auth/refresh      → rotate token pair (refresh in body)
 POST   /v1/auth/logout       → revoke refresh token (Bearer + refresh body)
 GET    /v1/me                → current profile (Bearer)

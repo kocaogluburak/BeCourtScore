@@ -155,7 +155,7 @@ func aggregateUserStats(userID string, sportFilter string, matches []Match) User
 	out.SetDiff = out.SetsFor - out.SetsAgainst
 
 	// Stable sport order for clients.
-	for _, sport := range []string{"TENNIS", "PADEL", "SQUASH", "PING_PONG"} {
+	for _, sport := range []string{"TENNIS", "PADEL", "SQUASH", "PING_PONG", "PICKLEBALL"} {
 		if ss, ok := bySport[sport]; ok && ss.Matches > 0 {
 			out.BySport = append(out.BySport, *ss)
 		}

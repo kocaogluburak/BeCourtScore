@@ -36,6 +36,11 @@ type svcFacade interface {
 	GetGroupByCode(ctx context.Context, userID, code string) (GroupDetail, error)
 	DeleteGroup(ctx context.Context, userID, groupID string) error
 	LeaveGroup(ctx context.Context, userID, groupID string) error
+	ListSeasons(ctx context.Context, userID, groupID string, limit, offset int) ([]SeasonSummary, int64, error)
+	GetCurrentSeason(ctx context.Context, userID, groupID string) (SeasonDetail, error)
+	GetSeason(ctx context.Context, userID, groupID, seasonID string) (SeasonDetail, error)
+	StartSeason(ctx context.Context, userID, groupID string, cfg SeasonConfig) (SeasonDetail, error)
+	FinalizeSeason(ctx context.Context, userID, groupID, seasonID string) (SeasonDetail, error)
 }
 
 type handler struct {

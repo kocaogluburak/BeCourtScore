@@ -24,10 +24,17 @@ type svcFacade interface {
 	DeleteUser(ctx context.Context, userID string) error
 }
 
+// SignupAttributor records invite-code attribution for a newly created user.
+// Implemented by invite.Service; best-effort, must never fail signup.
+type SignupAttributor interface {
+	RecordSignup(ctx context.Context, code, userID string) error
+}
+
 type handler struct {
 	svc          svcFacade
 	hub          *sse.Hub
 	entitlements entitlement.Loader
+	attributor   SignupAttributor
 }
 
 func (h *handler) withEntitlement(ctx context.Context, user User) User {
@@ -49,7 +56,8 @@ func (h *handler) authWithProvider(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
 
 	var body struct {
-		IDToken string `json:"id_token"`
+		IDToken    string `json:"id_token"`
+		InviteCode string `json:"invite_code"`
 	}
 	if err := httpx.Decode(r, &body); err != nil || body.IDToken == "" {
 		httpx.Error(w, http.StatusBadRequest, "id_token required")
@@ -60,6 +68,12 @@ func (h *handler) authWithProvider(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.Error(w, http.StatusUnauthorized, "authentication failed")
 		return
+	}
+
+	if isNewUser && body.InviteCode != "" && h.attributor != nil && user.ID != "" {
+		if attrErr := h.attributor.RecordSignup(r.Context(), body.InviteCode, user.ID); attrErr != nil {
+			slog.Warn("identity: invite attribution failed", "user_id", user.ID, "err", attrErr)
+		}
 	}
 
 	httpx.JSON(w, http.StatusOK, map[string]any{

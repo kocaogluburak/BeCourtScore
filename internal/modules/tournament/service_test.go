@@ -139,14 +139,19 @@ type fakeTourGate struct {
 
 func (g *fakeTourGate) AllowCloudSync(context.Context, string) error            { return nil }
 func (g *fakeTourGate) AllowStats(context.Context, string) error                { return nil }
+func (g *fakeTourGate) AllowAdvancedStats(context.Context, string) error        { return nil }
 func (g *fakeTourGate) AllowPublicLive(context.Context, string) error           { return nil }
 func (g *fakeTourGate) AllowLargeTournament(context.Context, string, int) error { return g.err }
-func (g *fakeTourGate) MaxParticipants(context.Context, string) (int, error) {
+func (g *fakeTourGate) AllowLargeLeague(context.Context, string, int) error     { return g.err }
+func (g *fakeTourGate) AllowSeasonArchive(context.Context, string) error        { return g.err }
+func (g *fakeTourGate) AllowEquipment(context.Context, string) error            { return g.err }
+	func (g *fakeTourGate) MaxParticipants(context.Context, string) (int, error) {
 	if g.max == 0 {
 		return 8, nil
 	}
 	return g.max, nil
 }
+func (g *fakeTourGate) IsPro(context.Context, string) (bool, error) { return false, nil }
 
 func strptr(s string) *string { return &s }
 
@@ -497,6 +502,14 @@ func TestListMine_UnknownSportReturnsInvalid(t *testing.T) {
 	_, _, err := newService(f).ListMine(context.Background(), "u1", ListFilter{Sport: "CHESS"}, 20, 0)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("got %v, want ErrInvalid for unknown sport", err)
+	}
+}
+
+func TestListMine_PickleballSportPassesThrough(t *testing.T) {
+	f := &fakeStore{tournament: regTournament()}
+	_, _, err := newService(f).ListMine(context.Background(), "u1", ListFilter{Sport: "PICKLEBALL"}, 20, 0)
+	if err != nil {
+		t.Fatalf("pickleball should be a valid tournament sport: %v", err)
 	}
 }
 

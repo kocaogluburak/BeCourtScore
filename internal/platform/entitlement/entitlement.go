@@ -9,6 +9,7 @@ import (
 const (
 	FreeMatchLimit         = 10
 	FreeMaxParticipants    = 8
+	FreeMaxLeagueMembers   = 8 // seasons with 8+ members require Pro
 	ProMaxParticipants     = 128
 	DefaultMaxParticipants = 32
 	CodeProRequired        = "pro_required"
@@ -35,9 +36,18 @@ type Loader interface {
 type Gate interface {
 	AllowCloudSync(ctx context.Context, userID string) error
 	AllowStats(ctx context.Context, userID string) error
+	// AllowAdvancedStats is a strict Pro check (IsPro only) for point-by-point
+	// derived counts. Unlike AllowStats it does not honor the free match quota.
+	AllowAdvancedStats(ctx context.Context, userID string) error
 	AllowPublicLive(ctx context.Context, userID string) error
 	AllowLargeTournament(ctx context.Context, userID string, maxParticipants int) error
+	AllowLargeLeague(ctx context.Context, userID string, memberCount int) error
+	AllowSeasonArchive(ctx context.Context, userID string) error
+	// AllowEquipment is a strict Pro check (IsPro only) for gear tracking.
+	// Unlike AllowCloudSync it does not honor the free match quota.
+	AllowEquipment(ctx context.Context, userID string) error
 	MaxParticipants(ctx context.Context, userID string) (int, error)
+	IsPro(ctx context.Context, userID string) (bool, error)
 }
 
 // WithinFreeQuota is true when the user is Pro or still under the free match cap.

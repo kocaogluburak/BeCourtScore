@@ -140,8 +140,13 @@ func (h *handler) endLiveMatch(w http.ResponseWriter, r *http.Request) {
 		IsTieBreak bool       `json:"is_tie_break"`
 		WinnerSide      string       `json:"winner_side"`
 		SetScores       []SetScore   `json:"set_scores"`
-		PointLog        []PointEvent `json:"point_log"`
-		DurationSeconds *int         `json:"duration_seconds"`
+		PointLog        []PointEvent    `json:"point_log"`
+		DurationSeconds *int            `json:"duration_seconds"`
+		AvgHeartRate    *int            `json:"avg_heart_rate"`
+		MaxHeartRate    *int            `json:"max_heart_rate"`
+		ActiveCalories  *int            `json:"active_calories"`
+		FitnessSource   *string         `json:"fitness_source"`
+		FitnessSamples  []FitnessSample `json:"fitness_samples"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body")
@@ -154,6 +159,9 @@ func (h *handler) endLiveMatch(w http.ResponseWriter, r *http.Request) {
 		IsTieBreak: body.IsTieBreak, WinnerSide: body.WinnerSide,
 		SetScores: body.SetScores,
 		PointLog: body.PointLog, DurationSeconds: body.DurationSeconds,
+		AvgHeartRate: body.AvgHeartRate, MaxHeartRate: body.MaxHeartRate,
+		ActiveCalories: body.ActiveCalories, FitnessSource: body.FitnessSource,
+		FitnessSamples: body.FitnessSamples,
 	})
 	if err != nil {
 		switch {

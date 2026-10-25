@@ -17,7 +17,7 @@ import (
 )
 
 var validSports = map[string]bool{
-	"TENNIS": true, "PADEL": true, "SQUASH": true, "PING_PONG": true,
+	"TENNIS": true, "PADEL": true, "SQUASH": true, "PING_PONG": true, "PICKLEBALL": true,
 }
 var validFormats = map[string]bool{
 	"SINGLE_ELIM": true, "ROUND_ROBIN": true,

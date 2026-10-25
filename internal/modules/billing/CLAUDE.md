@@ -24,6 +24,7 @@ POST /v1/billing/apple/notifications  public ASN v2
 ```
 
 Products: `pro_monthly`, `pro_yearly`. Free quota: 10 finished cloud matches, then Pro for cloud write / stats / public live / tournament max>8.
+`AllowAdvancedStats` and `AllowEquipment` are **IsPro only** (ignore the free quota) — used by `GET /v1/matches/{id}/stats` and `/v1/me/equipment/*`.
 
 Play verify needs `PLAY_SERVICE_ACCOUNT_JSON` (Compose: `/run/secrets/play.json`). Startup logs `billing: Play verifier ready` or `billing: Play verifier unavailable`. Missing creds make `POST /v1/billing/google/verify` return 400 `store verifier unavailable`.
 

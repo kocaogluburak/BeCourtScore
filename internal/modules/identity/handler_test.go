@@ -382,6 +382,60 @@ func TestAuthWithProvider_MissingToken(t *testing.T) {
 	}
 }
 
+func TestAuthWithProvider_RecordsInviteOnNewUser(t *testing.T) {
+	svc := &stubService{
+		user:      baseUser(),
+		isNewUser: true,
+		session:   Session{AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 3600},
+	}
+	attr := &stubAttributor{}
+	h := &handler{svc: svc, hub: sse.NewHub(), attributor: attr}
+	body, _ := json.Marshal(map[string]string{"id_token": "google-id", "invite_code": "abc123"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/google", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("provider", "google")
+	w := httptest.NewRecorder()
+	h.authWithProvider(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	if attr.code != "abc123" || attr.userID != "user-abc" {
+		t.Fatalf("attribution: %+v", attr)
+	}
+}
+
+func TestAuthWithProvider_SkipsInviteOnExistingUser(t *testing.T) {
+	svc := &stubService{
+		user:      baseUser(),
+		isNewUser: false,
+		session:   Session{AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 3600},
+	}
+	attr := &stubAttributor{}
+	h := &handler{svc: svc, hub: sse.NewHub(), attributor: attr}
+	body, _ := json.Marshal(map[string]string{"id_token": "google-id", "invite_code": "abc123"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/google", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("provider", "google")
+	w := httptest.NewRecorder()
+	h.authWithProvider(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	if attr.code != "" {
+		t.Fatalf("existing user should not attribute: %+v", attr)
+	}
+}
+
+type stubAttributor struct {
+	code   string
+	userID string
+}
+
+func (s *stubAttributor) RecordSignup(_ context.Context, code, userID string) error {
+	s.code, s.userID = code, userID
+	return nil
+}
+
 func TestAuthWithProvider_Unauthorized(t *testing.T) {
 	svc := &stubService{authErr: errors.New("verify failed")}
 	h := &handler{svc: svc, hub: sse.NewHub()}

@@ -36,5 +36,11 @@ func Mount(r chi.Router, svc svcFacade, hub *sse.Hub, push PushSender, authMW fu
 		r.Get("/v1/groups/{id}", h.getGroup)
 		r.Delete("/v1/groups/{id}", h.deleteGroup)
 		r.Delete("/v1/groups/{id}/membership", h.leaveGroup)
+
+		r.Get("/v1/groups/{id}/seasons", h.listSeasons)
+		r.Get("/v1/groups/{id}/seasons/current", h.getCurrentSeason)
+		r.Get("/v1/groups/{id}/seasons/{seasonId}", h.getSeason)
+		r.Post("/v1/groups/{id}/seasons", h.startSeason)
+		r.Post("/v1/groups/{id}/seasons/{seasonId}/finalize", h.finalizeSeason)
 	})
 }

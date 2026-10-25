@@ -72,6 +72,18 @@ func TestLoad_FreeUnderCap(t *testing.T) {
 	if snap.MaxTournamentParticipants != entitlement.ProMaxParticipants {
 		t.Fatalf("under cap should allow large draws, got %d", snap.MaxTournamentParticipants)
 	}
+	if err := svc.AllowLargeLeague(context.Background(), "u1", 16); err != nil {
+		t.Fatalf("under cap should allow 8+ leagues: %v", err)
+	}
+	if err := svc.AllowSeasonArchive(context.Background(), "u1"); err != nil {
+		t.Fatalf("under cap should allow archive: %v", err)
+	}
+	if err := svc.AllowAdvancedStats(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("advanced stats should be Pro-only even under cap: %v", err)
+	}
+	if err := svc.AllowEquipment(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("equipment should be Pro-only even under cap: %v", err)
+	}
 }
 
 func TestLoad_OverCapWithoutPro(t *testing.T) {
@@ -95,6 +107,15 @@ func TestLoad_OverCapWithoutPro(t *testing.T) {
 	if err := svc.AllowLargeTournament(context.Background(), "u1", 16); !errors.Is(err, entitlement.ErrProRequired) {
 		t.Fatalf("err=%v", err)
 	}
+	if err := svc.AllowLargeLeague(context.Background(), "u1", 7); err != nil {
+		t.Fatalf("7-player league should stay free: %v", err)
+	}
+	if err := svc.AllowLargeLeague(context.Background(), "u1", 8); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("8-player league err=%v", err)
+	}
+	if err := svc.AllowSeasonArchive(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("archive err=%v", err)
+	}
 }
 
 func TestLoad_ActiveSubscription(t *testing.T) {
@@ -113,6 +134,49 @@ func TestLoad_ActiveSubscription(t *testing.T) {
 	if err := svc.AllowStats(context.Background(), "u1"); err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.AllowAdvancedStats(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := svc.IsPro(context.Background(), "u1")
+	if err != nil || !ok {
+		t.Fatalf("IsPro=%v err=%v", ok, err)
+	}
+}
+
+func TestAllowAdvancedStats_RequiresIsPro(t *testing.T) {
+	free := newBilling(&fakeStore{count: 3})
+	if err := free.AllowAdvancedStats(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("free under quota err=%v", err)
+	}
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	pro := newBilling(&fakeStore{
+		count: 3,
+		subs: []Sub{{
+			UserID: "u1", Store: "google", ProductID: ProductYearly,
+			OriginalTxnID: "txn-adv", Status: "active", ExpiresAt: now.Add(24 * time.Hour),
+		}},
+	})
+	if err := pro.AllowAdvancedStats(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAllowEquipment_RequiresIsPro(t *testing.T) {
+	free := newBilling(&fakeStore{count: 3})
+	if err := free.AllowEquipment(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("free under quota err=%v", err)
+	}
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	pro := newBilling(&fakeStore{
+		count: 3,
+		subs: []Sub{{
+			UserID: "u1", Store: "google", ProductID: ProductYearly,
+			OriginalTxnID: "txn-eq", Status: "active", ExpiresAt: now.Add(24 * time.Hour),
+		}},
+	})
+	if err := pro.AllowEquipment(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestLoad_ExpiredSubscription(t *testing.T) {
@@ -126,6 +190,10 @@ func TestLoad_ExpiredSubscription(t *testing.T) {
 	})
 	if err := svc.AllowCloudSync(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
 		t.Fatalf("err=%v", err)
+	}
+	ok, err := svc.IsPro(context.Background(), "u1")
+	if err != nil || ok {
+		t.Fatalf("expired should not be Pro: ok=%v err=%v", ok, err)
 	}
 }
 

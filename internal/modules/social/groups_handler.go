@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"courtscore/internal/platform/authkit"
+	"courtscore/internal/platform/entitlement"
 	"courtscore/internal/platform/httpx"
 )
 
@@ -95,12 +96,16 @@ func writeGroupErr(w http.ResponseWriter, err error, fallback string) {
 	switch {
 	case errors.Is(err, ErrInvalid):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrNoActiveSeason):
+		httpx.Error(w, http.StatusNotFound, "no active season")
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "group not found")
 	case errors.Is(err, ErrForbidden):
 		httpx.Error(w, http.StatusForbidden, "not allowed")
 	case errors.Is(err, ErrConflict):
 		httpx.Error(w, http.StatusConflict, err.Error())
+	case errors.Is(err, entitlement.ErrProRequired):
+		httpx.ProRequired(w)
 	default:
 		httpx.Error(w, http.StatusInternalServerError, fallback)
 	}

@@ -57,6 +57,104 @@ func TestSummarize_EmptyLog(t *testing.T) {
 	}
 }
 
+func TestSummarize_OutcomeTalliesPerSide(t *testing.T) {
+	stats := Summarize([]PointEvent{
+		{Side: "A", ScoreA: 0, ScoreB: 0, Server: "A1", Advantage: true, Outcome: "ace", OutcomeSide: "A"},
+		{Side: "B", ScoreA: 1, ScoreB: 0, Server: "A1", Advantage: true, Outcome: "df", OutcomeSide: "A"},
+		{Side: "A", ScoreA: 1, ScoreB: 1, Outcome: "winner", OutcomeSide: "A"},
+		{Side: "B", ScoreA: 2, ScoreB: 1, Outcome: "ue", OutcomeSide: "A"},
+		{Side: "B", ScoreA: 2, ScoreB: 2, Outcome: "winner", OutcomeSide: "B"},
+		{Side: "A", ScoreA: 2, ScoreB: 3, Outcome: "ue", OutcomeSide: "B"},
+	}, nil)
+	if stats.AcesA != 1 || stats.AcesB != 0 || stats.DoubleFaultsA != 1 || stats.DoubleFaultsB != 0 {
+		t.Fatalf("serve outcomes: %+v", stats)
+	}
+	if stats.WinnersA != 1 || stats.WinnersB != 1 || stats.UnforcedErrorsA != 1 || stats.UnforcedErrorsB != 1 {
+		t.Fatalf("rally outcomes: %+v", stats)
+	}
+	if stats.TaggedPoints != 6 || stats.TotalPoints != 6 {
+		t.Fatalf("tagged=%d total=%d", stats.TaggedPoints, stats.TotalPoints)
+	}
+}
+
+func TestSummarize_UntaggedAndUnknownIgnored(t *testing.T) {
+	stats := Summarize([]PointEvent{
+		{Side: "A", Outcome: "ace", OutcomeSide: "A"},
+		{Side: "B"},
+		{Side: "A", Outcome: "smash", OutcomeSide: "A"},
+		{Side: "B", Outcome: "winner", OutcomeSide: "C"},
+	}, nil)
+	if stats.AcesA != 1 || stats.TaggedPoints != 1 || stats.TotalPoints != 4 || stats.WinnersA != 0 || stats.WinnersB != 0 {
+		t.Fatalf("%+v", stats)
+	}
+}
+
+func TestSummarize_TagsDoNotChangeServeOrBreak(t *testing.T) {
+	plain := Summarize([]PointEvent{{
+		Side: "B", ScoreA: 1, ScoreB: 3, Server: "A1", Advantage: true,
+	}}, nil)
+	tagged := Summarize([]PointEvent{{
+		Side: "B", ScoreA: 1, ScoreB: 3, Server: "A1", Advantage: true,
+		Outcome: "winner", OutcomeSide: "B",
+	}}, nil)
+	if plain.ServePlayedA != tagged.ServePlayedA || plain.ServeWonA != tagged.ServeWonA {
+		t.Fatalf("serve changed: plain=%+v tagged=%+v", plain, tagged)
+	}
+	if plain.BreakFacedB != tagged.BreakFacedB || plain.BreakWonB != tagged.BreakWonB {
+		t.Fatalf("break changed: plain=%+v tagged=%+v", plain, tagged)
+	}
+	if tagged.WinnersB != 1 || tagged.TaggedPoints != 1 {
+		t.Fatalf("tag missing: %+v", tagged)
+	}
+}
+
+func TestCapPointLog_DropsUnknownOutcomeAndCaps(t *testing.T) {
+	in := []PointEvent{
+		{Side: "A", Outcome: "ace", OutcomeSide: "A"},
+		{Side: "B", Outcome: "smash", OutcomeSide: "B"},
+		{Side: "X", Outcome: "winner", OutcomeSide: "A"},
+		{Side: "A", Outcome: "winner", OutcomeSide: "Q"},
+	}
+	got := capPointLog(in)
+	if len(got) != 3 {
+		t.Fatalf("len=%d", len(got))
+	}
+	if got[0].Outcome != "ace" || got[0].OutcomeSide != "A" {
+		t.Fatalf("kept ace: %+v", got[0])
+	}
+	if got[1].Outcome != "" || got[1].OutcomeSide != "" {
+		t.Fatalf("unknown outcome kept: %+v", got[1])
+	}
+	if got[2].Outcome != "winner" || got[2].OutcomeSide != "" {
+		t.Fatalf("bad side kept: %+v", got[2])
+	}
+
+	points := make([]PointEvent, maxPointLog+10)
+	for i := range points {
+		points[i] = PointEvent{Side: "A"}
+	}
+	if got := capPointLog(points); len(got) != maxPointLog {
+		t.Fatalf("cap=%d", len(got))
+	}
+}
+
+func TestPointEventJSON_OldEventOmitsOutcome(t *testing.T) {
+	raw, err := json.Marshal(PointEvent{Side: "A", AtMs: 1, Advantage: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := decoded["o"]; ok {
+		t.Fatalf("untagged event included o: %s", raw)
+	}
+	if _, ok := decoded["op"]; ok {
+		t.Fatalf("untagged event included op: %s", raw)
+	}
+}
+
 func TestMatchJSON_OldMatchOmitsPointLog(t *testing.T) {
 	raw, err := json.Marshal(baseMatch())
 	if err != nil {

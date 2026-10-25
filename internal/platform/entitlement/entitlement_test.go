@@ -2,6 +2,12 @@ package entitlement
 
 import "testing"
 
+func TestFreeMaxLeagueMembers(t *testing.T) {
+	if FreeMaxLeagueMembers != 8 {
+		t.Fatalf("FreeMaxLeagueMembers=%d", FreeMaxLeagueMembers)
+	}
+}
+
 func TestWithinFreeQuota(t *testing.T) {
 	if !WithinFreeQuota(Snapshot{FinishedMatchCount: 0}) {
 		t.Fatal("0 matches should be free")

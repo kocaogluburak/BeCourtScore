@@ -18,9 +18,12 @@ type svcFacade interface {
 	ListMyMatches(ctx context.Context, userID string, f ListFilter, limit, offset int) ([]Match, int64, error)
 	ListUserMatches(ctx context.Context, viewerID, targetID string, f ListFilter, limit, offset int) ([]Match, int64, error)
 	GetMatch(ctx context.Context, viewerID, matchID string) (Match, error)
+	GetMatchPointStats(ctx context.Context, viewerID, matchID string) (MatchPointStats, error)
 	DeleteMatch(ctx context.Context, userID, matchID string) error
 	GetUserStats(ctx context.Context, viewerID, targetID, sport string) (UserStats, error)
 	GetHeadToHead(ctx context.Context, viewerID, targetID, sport string) (HeadToHead, error)
+	GetFitnessTrend(ctx context.Context, viewerID, targetID, sport string) ([]FitnessTrendPoint, error)
+	GetWrapped(ctx context.Context, userID string, year int) (WrappedReport, error)
 	StartLiveMatch(ctx context.Context, userID string, in LiveStartInput) (LiveMatch, error)
 	GetLiveMatch(ctx context.Context, viewerID, id string) (LiveMatch, error)
 	UpdateLiveMatch(ctx context.Context, userID, id string, u LiveScoreUpdate) (LiveMatch, error)
@@ -31,6 +34,12 @@ type svcFacade interface {
 	DeclineLiveMatch(ctx context.Context, userID, id string) (LiveMatch, error)
 	ShareLiveMatch(ctx context.Context, userID, id string) (token, url string, err error)
 	GetLiveByShareToken(ctx context.Context, token string) (LiveMatch, error)
+	CreateRematch(ctx context.Context, userID string, in RematchCreateInput) (RematchChallenge, error)
+	ListIncomingRematches(ctx context.Context, userID string, limit, offset int) ([]RematchChallenge, int64, error)
+	ListOutgoingRematches(ctx context.Context, userID string, limit, offset int) ([]RematchChallenge, int64, error)
+	AcceptRematch(ctx context.Context, userID, id string) (RematchPrefill, error)
+	RejectRematch(ctx context.Context, userID, id string) (RematchChallenge, error)
+	CancelRematch(ctx context.Context, userID, id string) (RematchChallenge, error)
 }
 
 type handler struct {
@@ -43,24 +52,29 @@ func (h *handler) createMatch(w http.ResponseWriter, r *http.Request) {
 	userID, _ := authkit.UserIDFromCtx(r.Context())
 
 	var body struct {
-		Sport          string     `json:"sport"`
-		PlayerAName    string     `json:"player_a_name"`
-		PlayerBName    string     `json:"player_b_name"`
-		PlayerAUserID  *string    `json:"player_a_user_id"`
-		PlayerBUserID  *string    `json:"player_b_user_id"`
-		PlayerA2Name   *string    `json:"player_a2_name"`
-		PlayerB2Name   *string    `json:"player_b2_name"`
-		PlayerA2UserID *string    `json:"player_a2_user_id"`
-		PlayerB2UserID *string    `json:"player_b2_user_id"`
-		SetsA          int        `json:"sets_a"`
-		SetsB          int        `json:"sets_b"`
-		SetScores      []SetScore `json:"set_scores"`
-		WinnerSide     string     `json:"winner_side"`
+		Sport           string       `json:"sport"`
+		PlayerAName     string       `json:"player_a_name"`
+		PlayerBName     string       `json:"player_b_name"`
+		PlayerAUserID   *string      `json:"player_a_user_id"`
+		PlayerBUserID   *string      `json:"player_b_user_id"`
+		PlayerA2Name    *string      `json:"player_a2_name"`
+		PlayerB2Name    *string      `json:"player_b2_name"`
+		PlayerA2UserID  *string      `json:"player_a2_user_id"`
+		PlayerB2UserID  *string      `json:"player_b2_user_id"`
+		SetsA           int          `json:"sets_a"`
+		SetsB           int          `json:"sets_b"`
+		SetScores       []SetScore   `json:"set_scores"`
+		WinnerSide      string       `json:"winner_side"`
 		SetRule         string       `json:"set_rule"`
 		FinalSet        string       `json:"final_set"`
 		PlayedAt        *time.Time   `json:"played_at"`
-		PointLog        []PointEvent `json:"point_log"`
-		DurationSeconds *int         `json:"duration_seconds"`
+		PointLog        []PointEvent    `json:"point_log"`
+		DurationSeconds *int            `json:"duration_seconds"`
+		AvgHeartRate    *int            `json:"avg_heart_rate"`
+		MaxHeartRate    *int            `json:"max_heart_rate"`
+		ActiveCalories  *int            `json:"active_calories"`
+		FitnessSource   *string         `json:"fitness_source"`
+		FitnessSamples  []FitnessSample `json:"fitness_samples"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body")
@@ -68,24 +82,29 @@ func (h *handler) createMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m, err := h.svc.CreateMatch(r.Context(), userID, CreateInput{
-		Sport:          body.Sport,
-		PlayerAName:    body.PlayerAName,
-		PlayerBName:    body.PlayerBName,
-		PlayerAUserID:  body.PlayerAUserID,
-		PlayerBUserID:  body.PlayerBUserID,
-		PlayerA2Name:   body.PlayerA2Name,
-		PlayerB2Name:   body.PlayerB2Name,
-		PlayerA2UserID: body.PlayerA2UserID,
-		PlayerB2UserID: body.PlayerB2UserID,
-		SetsA:          body.SetsA,
-		SetsB:          body.SetsB,
-		SetScores:      body.SetScores,
-		WinnerSide:     body.WinnerSide,
+		Sport:           body.Sport,
+		PlayerAName:     body.PlayerAName,
+		PlayerBName:     body.PlayerBName,
+		PlayerAUserID:   body.PlayerAUserID,
+		PlayerBUserID:   body.PlayerBUserID,
+		PlayerA2Name:    body.PlayerA2Name,
+		PlayerB2Name:    body.PlayerB2Name,
+		PlayerA2UserID:  body.PlayerA2UserID,
+		PlayerB2UserID:  body.PlayerB2UserID,
+		SetsA:           body.SetsA,
+		SetsB:           body.SetsB,
+		SetScores:       body.SetScores,
+		WinnerSide:      body.WinnerSide,
 		SetRule:         body.SetRule,
 		FinalSet:        body.FinalSet,
 		PlayedAt:        body.PlayedAt,
 		PointLog:        body.PointLog,
 		DurationSeconds: body.DurationSeconds,
+		AvgHeartRate:    body.AvgHeartRate,
+		MaxHeartRate:    body.MaxHeartRate,
+		ActiveCalories:  body.ActiveCalories,
+		FitnessSource:   body.FitnessSource,
+		FitnessSamples:  body.FitnessSamples,
 	})
 	if err != nil {
 		if errors.Is(err, ErrInvalid) {
@@ -164,6 +183,29 @@ func (h *handler) getMatch(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, m)
 }
 
+// --- GET /v1/matches/{id}/stats ---
+
+func (h *handler) getMatchPointStats(w http.ResponseWriter, r *http.Request) {
+	viewerID, _ := authkit.UserIDFromCtx(r.Context())
+	matchID := r.PathValue("id")
+
+	stats, err := h.svc.GetMatchPointStats(r.Context(), viewerID, matchID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "match not found")
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "no access to this match")
+		case errors.Is(err, entitlement.ErrProRequired):
+			httpx.ProRequired(w)
+		default:
+			httpx.Error(w, http.StatusInternalServerError, "failed to get match stats")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, stats)
+}
+
 // --- DELETE /v1/matches/{id} ---
 
 func (h *handler) deleteMatch(w http.ResponseWriter, r *http.Request) {
@@ -227,4 +269,31 @@ func (h *handler) getHeadToHead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h2h)
+}
+
+// --- GET /v1/users/{userID}/fitness-trend ---
+
+func (h *handler) getFitnessTrend(w http.ResponseWriter, r *http.Request) {
+	viewerID, _ := authkit.UserIDFromCtx(r.Context())
+	targetID := r.PathValue("userID")
+	sport := r.URL.Query().Get("sport")
+
+	points, err := h.svc.GetFitnessTrend(r.Context(), viewerID, targetID, sport)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrForbidden):
+			httpx.Error(w, http.StatusForbidden, "not friends with this user")
+		case errors.Is(err, ErrInvalid):
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, entitlement.ErrProRequired):
+			httpx.ProRequired(w)
+		default:
+			httpx.Error(w, http.StatusInternalServerError, "failed to get fitness trend")
+		}
+		return
+	}
+	if points == nil {
+		points = []FitnessTrendPoint{}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": points})
 }

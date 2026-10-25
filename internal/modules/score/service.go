@@ -19,7 +19,7 @@ import (
 const liveStaleTTL = 24 * time.Hour
 
 var validSports = map[string]bool{
-	"TENNIS": true, "PADEL": true, "SQUASH": true, "PING_PONG": true,
+	"TENNIS": true, "PADEL": true, "SQUASH": true, "PING_PONG": true, "PICKLEBALL": true,
 }
 
 // FriendChecker reports whether two users have an accepted friendship.
@@ -33,6 +33,44 @@ type PushSender interface {
 	SendToUser(ctx context.Context, userID, title, body string, data map[string]string) error
 }
 
+// AchievementHook is called after a finished match is persisted and rated.
+// Implemented by achievements.Service; wired in cmd/api/main.go. Nil-safe.
+type AchievementHook interface {
+	OnMatchFinished(ctx context.Context, participantUserIDs []string, sport string)
+}
+
+// ActivitySink is called after a finished match is persisted (or deleted).
+// Implemented by social.FeedService (via a thin adapter in main.go). Nil-safe.
+type ActivitySink interface {
+	OnMatchRecorded(ctx context.Context, m Match)
+	OnMatchDeleted(ctx context.Context, matchID string)
+}
+
+// FinishedMatch is the slim snapshot passed to SeasonNotifier.
+type FinishedMatch struct {
+	ID             string
+	Sport          string
+	PlayedAt       time.Time
+	PlayerAUserID  string
+	PlayerA2UserID string
+	PlayerBUserID  string
+	PlayerB2UserID string
+}
+
+// SeasonNotifier is called after a finished match is persisted.
+// Implemented by social.Service (via a thin adapter in main.go). Nil-safe.
+type SeasonNotifier interface {
+	OnMatchFinished(ctx context.Context, m FinishedMatch)
+}
+
+// UsageAccruer adds match duration onto the recorder's active equipment.
+// Implemented by equipment.Service; wired in cmd/api/main.go. Nil-safe.
+type UsageAccruer interface {
+	// AccrueMatchDuration adds seconds onto the user's active equipment (all types).
+	// Best-effort: never fails the match write.
+	AccrueMatchDuration(ctx context.Context, userID string, seconds int)
+}
+
 // store is the persistence surface used by Service.
 // The concrete *repo implements it; tests substitute an in-memory fake.
 type store interface {
@@ -41,9 +79,12 @@ type store interface {
 	getByID(ctx context.Context, id string) (Match, error)
 	deleteByID(ctx context.Context, id, createdBy string) error
 	listParticipantMatches(ctx context.Context, userID, sport string) ([]Match, error)
+	listParticipantMatchesInRange(ctx context.Context, userID string, from, to time.Time) ([]Match, error)
+	firstMatchPerSport(ctx context.Context, userID string) ([]SportFirst, error)
 	listH2HMatches(ctx context.Context, userA, userB, sport string) ([]Match, error)
-	applySinglesElo(ctx context.Context, sport, winnerID, loserID string) error
+	applySinglesElo(ctx context.Context, sport, winnerID, loserID, matchID string, playedAt time.Time) error
 	listRatings(ctx context.Context, userID string) ([]UserRating, error)
+	ratingPeakInRange(ctx context.Context, userID string, from, to time.Time) (*WrappedElo, error)
 	insertLive(ctx context.Context, createdBy string, in LiveStartInput) (LiveMatch, error)
 	getLiveByID(ctx context.Context, id string) (LiveMatch, error)
 	hasOpenLiveBetween(ctx context.Context, creatorID, opponentID string) (bool, error)
@@ -56,14 +97,26 @@ type store interface {
 	setShareToken(ctx context.Context, id, token string) (LiveMatch, error)
 	getLiveByShareToken(ctx context.Context, token string) (LiveMatch, error)
 	setDeclined(ctx context.Context, id string, userIDs []string) (LiveMatch, error)
+	insertRematch(ctx context.Context, challengerID string, in RematchCreateInput) (RematchChallenge, error)
+	getRematch(ctx context.Context, id string) (RematchChallenge, error)
+	listIncomingRematches(ctx context.Context, opponentID string, limit, offset int) ([]RematchChallenge, int64, error)
+	listOutgoingRematches(ctx context.Context, challengerID string, limit, offset int) ([]RematchChallenge, int64, error)
+	updateRematchStatus(ctx context.Context, id, fromStatus, toStatus string) (RematchChallenge, error)
+	expirePendingRematches(ctx context.Context, olderThan time.Time) error
+	userSummary(ctx context.Context, id string) (UserSummary, error)
 }
 
 // Service is the score domain's business logic layer.
 type Service struct {
 	repo            store
 	friends         FriendChecker
+	users           UserLookup
 	hub             *sse.Hub
 	push            PushSender
+	ach             AchievementHook
+	activity        ActivitySink
+	seasons         SeasonNotifier
+	accrue          UsageAccruer
 	gate            entitlement.Gate
 	publicWebOrigin string
 }
@@ -74,6 +127,14 @@ func NewService(pool *pgxpool.Pool, friends FriendChecker, hub *sse.Hub, push Pu
 }
 
 func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }
+
+func (s *Service) SetAchievements(h AchievementHook) { s.ach = h }
+
+func (s *Service) SetActivitySink(a ActivitySink) { s.activity = a }
+
+func (s *Service) SetSeasonNotifier(n SeasonNotifier) { s.seasons = n }
+
+func (s *Service) SetAccruer(a UsageAccruer) { s.accrue = a }
 
 func (s *Service) SetPublicWebOrigin(origin string) {
 	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
@@ -116,6 +177,8 @@ func (s *Service) CreateMatch(ctx context.Context, userID string, in CreateInput
 	if in.DurationSeconds != nil && *in.DurationSeconds < 0 {
 		in.DurationSeconds = nil
 	}
+	in.AvgHeartRate, in.MaxHeartRate, in.ActiveCalories, in.FitnessSource, in.FitnessSamples =
+		sanitizeFitnessInput(in.AvgHeartRate, in.MaxHeartRate, in.ActiveCalories, in.FitnessSource, in.FitnessSamples)
 	if s.gate != nil {
 		if err := s.gate.AllowCloudSync(ctx, userID); err != nil {
 			return Match{}, err
@@ -128,6 +191,10 @@ func (s *Service) CreateMatch(ctx context.Context, userID string, in CreateInput
 	if err := s.rateFinished(ctx, m); err != nil {
 		return Match{}, err
 	}
+	s.notifyAchievements(ctx, m)
+	s.notifyActivity(ctx, m)
+	s.notifySeason(ctx, m)
+	s.notifyAccrual(ctx, userID, m.DurationSeconds)
 	return m, nil
 }
 
@@ -145,7 +212,14 @@ func validateSetScores(scores []SetScore) error {
 
 // ListMyMatches returns the caller's match history (participant or recorder).
 func (s *Service) ListMyMatches(ctx context.Context, userID string, f ListFilter, limit, offset int) ([]Match, int64, error) {
-	return s.repo.listForUser(ctx, userID, f, limit, offset)
+	matches, total, err := s.repo.listForUser(ctx, userID, f, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.stripFitnessSamplesOnList(ctx, userID, matches); err != nil {
+		return nil, 0, err
+	}
+	return matches, total, nil
 }
 
 // ListUserMatches returns another user's history. Allowed for self or an
@@ -160,7 +234,14 @@ func (s *Service) ListUserMatches(ctx context.Context, viewerID, targetID string
 			return nil, 0, ErrForbidden
 		}
 	}
-	return s.repo.listForUser(ctx, targetID, f, limit, offset)
+	matches, total, err := s.repo.listForUser(ctx, targetID, f, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.stripFitnessSamplesOnList(ctx, viewerID, matches); err != nil {
+		return nil, 0, err
+	}
+	return matches, total, nil
 }
 
 // GetMatch returns a match if the viewer is a participant, the recorder,
@@ -171,28 +252,84 @@ func (s *Service) GetMatch(ctx context.Context, viewerID, matchID string) (Match
 		return Match{}, err
 	}
 
-	if m.CreatedBy == viewerID || matchHasUser(m, viewerID) {
-		return m, nil
+	allowed := m.CreatedBy == viewerID || matchHasUser(m, viewerID)
+	if !allowed {
+		for _, participant := range []*string{&m.CreatedBy, m.PlayerAUserID, m.PlayerBUserID, m.PlayerA2UserID, m.PlayerB2UserID} {
+			if participant == nil {
+				continue
+			}
+			ok, err := s.friends.AreFriends(ctx, viewerID, *participant)
+			if err != nil {
+				return Match{}, err
+			}
+			if ok {
+				allowed = true
+				break
+			}
+		}
 	}
+	if !allowed {
+		return Match{}, ErrForbidden
+	}
+	if err := s.stripFitnessSamplesIfNeeded(ctx, viewerID, &m); err != nil {
+		return Match{}, err
+	}
+	return m, nil
+}
 
-	for _, participant := range []*string{&m.CreatedBy, m.PlayerAUserID, m.PlayerBUserID, m.PlayerA2UserID, m.PlayerB2UserID} {
-		if participant == nil {
-			continue
-		}
-		ok, err := s.friends.AreFriends(ctx, viewerID, *participant)
-		if err != nil {
-			return Match{}, err
-		}
-		if ok {
-			return m, nil
+// GetMatchPointStats returns derived ace/DF/winner/UE (+ serve/break) counts.
+// Visibility matches GetMatch; derived advanced stats require a strict Pro gate.
+func (s *Service) GetMatchPointStats(ctx context.Context, viewerID, matchID string) (MatchPointStats, error) {
+	m, err := s.GetMatch(ctx, viewerID, matchID)
+	if err != nil {
+		return MatchPointStats{}, err
+	}
+	if s.gate != nil {
+		if err := s.gate.AllowAdvancedStats(ctx, viewerID); err != nil {
+			return MatchPointStats{}, err
 		}
 	}
-	return Match{}, ErrForbidden
+	return Summarize(m.PointLog, m.DurationSeconds), nil
+}
+
+func (s *Service) stripFitnessSamplesIfNeeded(ctx context.Context, viewerID string, m *Match) error {
+	if m == nil || s.gate == nil {
+		return nil
+	}
+	ok, err := s.gate.IsPro(ctx, viewerID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		m.FitnessSamples = nil
+	}
+	return nil
+}
+
+func (s *Service) stripFitnessSamplesOnList(ctx context.Context, viewerID string, matches []Match) error {
+	if s.gate == nil {
+		return nil
+	}
+	ok, err := s.gate.IsPro(ctx, viewerID)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	for i := range matches {
+		matches[i].FitnessSamples = nil
+	}
+	return nil
 }
 
 // DeleteMatch removes a match; only its creator may delete it.
 func (s *Service) DeleteMatch(ctx context.Context, userID, matchID string) error {
-	return s.repo.deleteByID(ctx, matchID, userID)
+	if err := s.repo.deleteByID(ctx, matchID, userID); err != nil {
+		return err
+	}
+	s.notifyActivityDeleted(ctx, matchID)
+	return nil
 }
 
 // requireSelfOrFriend allows viewing target stats/history for self or accepted friends.
@@ -236,12 +373,79 @@ func (s *Service) GetUserStats(ctx context.Context, viewerID, targetID, sport st
 	return attachRatings(aggregateUserStats(targetID, sport, matches), ratings), nil
 }
 
+// GetFitnessTrend returns per-match HR/calorie summaries for a Pro viewer
+// with self-or-friend visibility (same gate as stats/h2h).
+func (s *Service) GetFitnessTrend(ctx context.Context, viewerID, targetID, sport string) ([]FitnessTrendPoint, error) {
+	if sport != "" && !validSports[sport] {
+		return nil, fmt.Errorf("%w: unknown sport %q", ErrInvalid, sport)
+	}
+	if err := s.requireSelfOrFriend(ctx, viewerID, targetID); err != nil {
+		return nil, err
+	}
+	if s.gate != nil {
+		if err := s.gate.AllowStats(ctx, viewerID); err != nil {
+			return nil, err
+		}
+	}
+	matches, err := s.repo.listParticipantMatches(ctx, targetID, sport)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FitnessTrendPoint, 0, len(matches))
+	for _, m := range matches {
+		if m.AvgHeartRate == nil && m.MaxHeartRate == nil && m.ActiveCalories == nil {
+			continue
+		}
+		out = append(out, FitnessTrendPoint{
+			MatchID:         m.ID,
+			Sport:           m.Sport,
+			PlayedAt:        m.PlayedAt.UTC().Format(time.RFC3339),
+			AvgHeartRate:    m.AvgHeartRate,
+			MaxHeartRate:    m.MaxHeartRate,
+			ActiveCalories:  m.ActiveCalories,
+			DurationSeconds: m.DurationSeconds,
+		})
+	}
+	return out, nil
+}
+
 func (s *Service) rateFinished(ctx context.Context, m Match) error {
 	winner, loser, ok := singlesEloPair(m)
 	if !ok {
 		return nil
 	}
-	return s.repo.applySinglesElo(ctx, m.Sport, winner, loser)
+	playedAt := m.PlayedAt
+	if playedAt.IsZero() {
+		playedAt = time.Now().UTC()
+	}
+	return s.repo.applySinglesElo(ctx, m.Sport, winner, loser, m.ID, playedAt)
+}
+
+// GetWrapped returns the caller's year-in-review. Self only, FREE — does not
+// call AllowStats. Year window is UTC [Y-01-01, Y+1-01-01).
+func (s *Service) GetWrapped(ctx context.Context, userID string, year int) (WrappedReport, error) {
+	now := time.Now().UTC()
+	from, to, err := wrappedYearWindow(year, now)
+	if err != nil {
+		return WrappedReport{}, err
+	}
+	matches, err := s.repo.listParticipantMatchesInRange(ctx, userID, from, to)
+	if err != nil {
+		return WrappedReport{}, err
+	}
+	firsts, err := s.repo.firstMatchPerSport(ctx, userID)
+	if err != nil {
+		return WrappedReport{}, err
+	}
+	ratings, err := s.repo.listRatings(ctx, userID)
+	if err != nil {
+		return WrappedReport{}, err
+	}
+	peak, err := s.repo.ratingPeakInRange(ctx, userID, from, to)
+	if err != nil {
+		return WrappedReport{}, err
+	}
+	return aggregateWrapped(userID, year, matches, firsts, ratings, peak, now), nil
 }
 
 // GetHeadToHead returns viewer-vs-target stats from the viewer's perspective.
@@ -388,6 +592,12 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 	if err := validateSetScores(in.SetScores); err != nil {
 		return LiveMatch{}, err
 	}
+	if in.DurationSeconds != nil && *in.DurationSeconds < 0 {
+		in.DurationSeconds = nil
+	}
+	in.AvgHeartRate, in.MaxHeartRate, in.ActiveCalories, in.FitnessSource, in.FitnessSamples =
+		sanitizeFitnessInput(in.AvgHeartRate, in.MaxHeartRate, in.ActiveCalories, in.FitnessSource, in.FitnessSamples)
+	in.PointLog = capPointLog(in.PointLog)
 
 	var historyID *string
 	if s.gate != nil {
@@ -422,6 +632,11 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 		WinnerSide:      in.WinnerSide,
 		PointLog:        in.PointLog,
 		DurationSeconds: in.DurationSeconds,
+		AvgHeartRate:    in.AvgHeartRate,
+		MaxHeartRate:    in.MaxHeartRate,
+		ActiveCalories:  in.ActiveCalories,
+		FitnessSource:   in.FitnessSource,
+		FitnessSamples:  in.FitnessSamples,
 	})
 	if err != nil {
 		return LiveMatch{}, err
@@ -429,6 +644,10 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 	if err := s.rateFinished(ctx, hist); err != nil {
 		return LiveMatch{}, err
 	}
+	s.notifyAchievements(ctx, hist)
+	s.notifyActivity(ctx, hist)
+	s.notifySeason(ctx, hist)
+	s.notifyAccrual(ctx, userID, hist.DurationSeconds)
 	historyID = &hist.ID
 	ended, err := s.repo.endLive(ctx, id, in, historyID)
 	if err != nil {
@@ -694,4 +913,85 @@ func isRegisteredOpponent(userID string, m LiveMatch) bool {
 		return false
 	}
 	return liveUserInSlots(userID, m)
+}
+
+// notifyAchievements is best-effort: hook failures must never fail the match POST.
+func (s *Service) notifyAchievements(ctx context.Context, m Match) {
+	if s.ach == nil {
+		return
+	}
+	ids := inviteeIDs("", m.PlayerAUserID, m.PlayerA2UserID, m.PlayerBUserID, m.PlayerB2UserID)
+	if len(ids) == 0 {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("score: achievements hook panic", "err", rec)
+		}
+	}()
+	s.ach.OnMatchFinished(ctx, ids, m.Sport)
+}
+
+// notifyActivity is best-effort: hook failures must never fail the match POST.
+func (s *Service) notifyActivity(ctx context.Context, m Match) {
+	if s.activity == nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("score: activity hook panic", "err", rec)
+		}
+	}()
+	s.activity.OnMatchRecorded(ctx, m)
+}
+
+func (s *Service) notifySeason(ctx context.Context, m Match) {
+	if s.seasons == nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("score: season hook panic", "err", rec)
+		}
+	}()
+	s.seasons.OnMatchFinished(ctx, FinishedMatch{
+		ID:             m.ID,
+		Sport:          m.Sport,
+		PlayedAt:       m.PlayedAt,
+		PlayerAUserID:  derefID(m.PlayerAUserID),
+		PlayerA2UserID: derefID(m.PlayerA2UserID),
+		PlayerBUserID:  derefID(m.PlayerBUserID),
+		PlayerB2UserID: derefID(m.PlayerB2UserID),
+	})
+}
+
+func derefID(id *string) string {
+	if id == nil {
+		return ""
+	}
+	return *id
+}
+
+func (s *Service) notifyAccrual(ctx context.Context, userID string, seconds *int) {
+	if s.accrue == nil || seconds == nil || *seconds <= 0 {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("score: accrue hook panic", "err", rec)
+		}
+	}()
+	s.accrue.AccrueMatchDuration(ctx, userID, *seconds)
+}
+
+func (s *Service) notifyActivityDeleted(ctx context.Context, matchID string) {
+	if s.activity == nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("score: activity delete hook panic", "err", rec)
+		}
+	}()
+	s.activity.OnMatchDeleted(ctx, matchID)
 }

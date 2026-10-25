@@ -157,7 +157,7 @@ func randomGroupCode(n int) string {
 
 func validGroupSport(sport string) bool {
 	switch sport {
-	case "TENNIS", "PADEL", "SQUASH", "PING_PONG":
+	case "TENNIS", "PADEL", "SQUASH", "PING_PONG", "PICKLEBALL":
 		return true
 	default:
 		return false

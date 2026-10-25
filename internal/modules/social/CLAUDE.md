@@ -2,8 +2,10 @@
 
 > Focused notes for the `social` module. See `../../../CLAUDE.md` for the whole backend.
 
-Handles user search, public profiles, friend requests, the friend list, and invite-code groups.
+Handles user search, public profiles, friend requests, the friend list, invite-code groups,
+and the friend activity feed (kudos + short comments).
 `social.Service` also implements `score.FriendChecker` (wired in `main.go`).
+`social.FeedService` implements `score.ActivitySink` via a thin adapter in `cmd/api/main.go`.
 
 ## Files
 
@@ -15,6 +17,9 @@ Handles user search, public profiles, friend requests, the friend list, and invi
 | `repo.go` | Postgres access to `friendships` |
 | `handler_test.go` | Handler tests |
 | `groups.go`, `ladder.go`, `groups_repo.go`, `groups_handler.go` | Invite-code groups and the weekly ladder |
+| `seasons.go`, `seasons_repo.go`, `seasons_handler.go`, `season_job.go` | Opt-in 6–8 week leagues + promo/relegation |
+| `feed.go`, `feed_repo.go`, `feed_handler.go`, `feed_routes.go` | Friend activity feed (pull-on-read + SSE) |
+| `feed_test.go`, `feed_handler_test.go` | FEED-01…06 + HTTP envelope |
 
 ## Routes
 
@@ -34,6 +39,20 @@ GET    /v1/groups/by-code/{code}        → members only: members + this ISO wee
 GET    /v1/groups/{id}                  → members only: members + this ISO week
 DELETE /v1/groups/{id}                  → owner only
 DELETE /v1/groups/{id}/membership       → leave; owner must delete instead
+GET    /v1/groups/{id}/seasons          → members: current + past seasons, paginated
+GET    /v1/groups/{id}/seasons/current  → members: active season + live standings (404 if weekly-only)
+GET    /v1/groups/{id}/seasons/{seasonId} → members: live if ACTIVE; COMPLETED is Pro archive
+POST   /v1/groups/{id}/seasons          → owner: start season {weeks,division_count,count_social_nights}; 8+ Pro
+POST   /v1/groups/{id}/seasons/{seasonId}/finalize → owner: manual rollover
+
+GET    /v1/feed                         → friends' activities, paginated
+POST   /v1/feed/{id}/reactions          → {"type":"kudos"} idempotent (201)
+DELETE /v1/feed/{id}/reactions          → remove caller's kudos (204)
+GET    /v1/feed/{id}/comments           → paginated, oldest→newest
+POST   /v1/feed/{id}/comments           → {"body"} 1–280 chars (201)
+DELETE /v1/feed/{id}/comments/{cid}     → comment author or activity author (204)
+GET    /v1/me/feed-settings             → {feed_opt_out}
+PATCH  /v1/me/feed-settings             → {feed_opt_out}
 ```
 
 ## Weekly ladder
@@ -56,6 +75,10 @@ DELETE /v1/groups/{id}/membership       → leave; owner must delete instead
 - `friend.request_received` → addressee
 - `friend.request_accepted` → requester
 - `friend.removed` → the removed side
+- `feed.activity_created` → each accepted friend of the actor
+- `feed.reaction_added` → activity author + actor's friends
+- `feed.comment_added` → activity author + actor's friends
+- `season.started` / `season.standings_updated` / `season.completed` → each season member
 
 ## Gotchas
 

@@ -88,6 +88,11 @@ type LiveEndInput struct {
 	SetScores       []SetScore
 	PointLog        []PointEvent
 	DurationSeconds *int
+	AvgHeartRate    *int
+	MaxHeartRate    *int
+	ActiveCalories  *int
+	FitnessSource   *string
+	FitnessSamples  []FitnessSample
 }
 
 const liveCols = `id, sport, status, player_a_name, player_b_name, player_a_user_id, player_b_user_id,

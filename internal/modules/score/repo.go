@@ -36,11 +36,16 @@ type Match struct {
 	Winner          string       `json:"winner"` // display name derived from winner_side
 	SetRule         string       `json:"set_rule"`
 	FinalSet        string       `json:"final_set"`
-	PointLog        []PointEvent `json:"point_log,omitempty"`
-	DurationSeconds *int         `json:"duration_seconds,omitempty"`
-	CreatedBy       string       `json:"created_by"`
-	PlayedAt        time.Time    `json:"played_at"`
-	CreatedAt       time.Time    `json:"created_at"`
+	PointLog        []PointEvent     `json:"point_log,omitempty"`
+	DurationSeconds *int             `json:"duration_seconds,omitempty"`
+	AvgHeartRate    *int             `json:"avg_heart_rate,omitempty"`
+	MaxHeartRate    *int             `json:"max_heart_rate,omitempty"`
+	ActiveCalories  *int             `json:"active_calories,omitempty"`
+	FitnessSource   *string          `json:"fitness_source,omitempty"`
+	FitnessSamples  []FitnessSample  `json:"fitness_samples,omitempty"`
+	CreatedBy       string           `json:"created_by"`
+	PlayedAt        time.Time        `json:"played_at"`
+	CreatedAt       time.Time        `json:"created_at"`
 }
 
 // CreateInput holds the fields required to record a match.
@@ -63,6 +68,11 @@ type CreateInput struct {
 	PlayedAt        *time.Time
 	PointLog        []PointEvent
 	DurationSeconds *int
+	AvgHeartRate    *int
+	MaxHeartRate    *int
+	ActiveCalories  *int
+	FitnessSource   *string
+	FitnessSamples  []FitnessSample
 }
 
 // ListFilter narrows a match history listing.
@@ -76,16 +86,19 @@ type repo struct{ pool *pgxpool.Pool }
 const matchCols = `id, sport, player_a_name, player_b_name, player_a_user_id, player_b_user_id,
        player_a2_name, player_b2_name, player_a2_user_id, player_b2_user_id,
        sets_a, sets_b, set_scores, winner_side, created_by, played_at,
-       set_rule, final_set, created_at, point_log, duration_seconds`
+       set_rule, final_set, created_at, point_log, duration_seconds,
+       avg_heart_rate, max_heart_rate, active_calories, fitness_source, fitness_samples`
 
 func scanMatch(row pgx.Row) (Match, error) {
 	var m Match
 	var setScoresRaw []byte
 	var pointLogRaw []byte
+	var fitnessRaw []byte
 	err := row.Scan(&m.ID, &m.Sport, &m.PlayerAName, &m.PlayerBName, &m.PlayerAUserID, &m.PlayerBUserID,
 		&m.PlayerA2Name, &m.PlayerB2Name, &m.PlayerA2UserID, &m.PlayerB2UserID,
 		&m.SetsA, &m.SetsB, &setScoresRaw, &m.WinnerSide, &m.CreatedBy, &m.PlayedAt,
-		&m.SetRule, &m.FinalSet, &m.CreatedAt, &pointLogRaw, &m.DurationSeconds)
+		&m.SetRule, &m.FinalSet, &m.CreatedAt, &pointLogRaw, &m.DurationSeconds,
+		&m.AvgHeartRate, &m.MaxHeartRate, &m.ActiveCalories, &m.FitnessSource, &fitnessRaw)
 	if err != nil {
 		return Match{}, err
 	}
@@ -97,6 +110,9 @@ func scanMatch(row pgx.Row) (Match, error) {
 	}
 	if len(pointLogRaw) > 0 {
 		_ = json.Unmarshal(pointLogRaw, &m.PointLog)
+	}
+	if len(fitnessRaw) > 0 {
+		_ = json.Unmarshal(fitnessRaw, &m.FitnessSamples)
 	}
 	if m.WinnerSide == "A" {
 		m.Winner = sideLabel(m.PlayerAName, m.PlayerA2Name)
@@ -112,6 +128,14 @@ func marshalPointLog(points []PointEvent) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(points)
+}
+
+func marshalFitnessSamples(samples []FitnessSample) ([]byte, error) {
+	samples = capFitnessSamples(samples)
+	if samples == nil {
+		return nil, nil
+	}
+	return json.Marshal(samples)
 }
 
 func marshalSetScores(scores []SetScore) ([]byte, error) {
@@ -134,20 +158,26 @@ func (r *repo) insert(ctx context.Context, createdBy string, in CreateInput) (Ma
 	if err != nil {
 		return Match{}, fmt.Errorf("marshal point_log: %w", err)
 	}
+	fitnessRaw, err := marshalFitnessSamples(in.FitnessSamples)
+	if err != nil {
+		return Match{}, fmt.Errorf("marshal fitness_samples: %w", err)
+	}
 
 	q := fmt.Sprintf(`
 		INSERT INTO matches (sport, player_a_name, player_b_name, player_a_user_id, player_b_user_id,
 		                     player_a2_name, player_b2_name, player_a2_user_id, player_b2_user_id,
 		                     sets_a, sets_b, set_scores, winner_side, created_by, played_at,
-		                     set_rule, final_set, point_log, duration_seconds)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		                     set_rule, final_set, point_log, duration_seconds,
+		                     avg_heart_rate, max_heart_rate, active_calories, fitness_source, fitness_samples)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 		RETURNING %s`, matchCols)
 
 	m, err := scanMatch(r.pool.QueryRow(ctx, q,
 		in.Sport, in.PlayerAName, in.PlayerBName, in.PlayerAUserID, in.PlayerBUserID,
 		in.PlayerA2Name, in.PlayerB2Name, in.PlayerA2UserID, in.PlayerB2UserID,
 		in.SetsA, in.SetsB, raw, in.WinnerSide, createdBy, playedAt, in.SetRule, in.FinalSet,
-		pointRaw, in.DurationSeconds))
+		pointRaw, in.DurationSeconds,
+		in.AvgHeartRate, in.MaxHeartRate, in.ActiveCalories, in.FitnessSource, fitnessRaw))
 	if err != nil {
 		return Match{}, fmt.Errorf("insert match: %w", err)
 	}
@@ -260,6 +290,55 @@ func (r *repo) listParticipantMatches(ctx context.Context, userID, sport string)
 	return scanMatchRows(rows)
 }
 
+// listParticipantMatchesInRange is the year-window variant of listParticipantMatches.
+// The half-open range [from, to) is UTC and prunes monthly partitions on played_at.
+func (r *repo) listParticipantMatchesInRange(ctx context.Context, userID string, from, to time.Time) ([]Match, error) {
+	union := `
+		SELECT ` + matchCols + ` FROM matches WHERE player_a_user_id = $1
+		UNION
+		SELECT ` + matchCols + ` FROM matches WHERE player_b_user_id = $1
+		UNION
+		SELECT ` + matchCols + ` FROM matches WHERE player_a2_user_id = $1
+		UNION
+		SELECT ` + matchCols + ` FROM matches WHERE player_b2_user_id = $1`
+	q := fmt.Sprintf(
+		`SELECT %s FROM (%s) m WHERE played_at >= $2 AND played_at < $3 ORDER BY played_at DESC`,
+		matchCols, union)
+	rows, err := r.pool.Query(ctx, q, userID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("list participant matches in range: %w", err)
+	}
+	defer rows.Close()
+	return scanMatchRows(rows)
+}
+
+// firstMatchPerSport returns the earliest participant match per sport (any year).
+func (r *repo) firstMatchPerSport(ctx context.Context, userID string) ([]SportFirst, error) {
+	union := `
+		SELECT sport, played_at FROM matches WHERE player_a_user_id = $1
+		UNION ALL
+		SELECT sport, played_at FROM matches WHERE player_b_user_id = $1
+		UNION ALL
+		SELECT sport, played_at FROM matches WHERE player_a2_user_id = $1
+		UNION ALL
+		SELECT sport, played_at FROM matches WHERE player_b2_user_id = $1`
+	q := fmt.Sprintf(`SELECT sport, MIN(played_at) FROM (%s) x GROUP BY sport`, union)
+	rows, err := r.pool.Query(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("first match per sport: %w", err)
+	}
+	defer rows.Close()
+	out := []SportFirst{}
+	for rows.Next() {
+		var row SportFirst
+		if err := rows.Scan(&row.Sport, &row.PlayedAt); err != nil {
+			return nil, fmt.Errorf("scan first sport: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // listH2HMatches returns matches where both userA and userB are registered players,
 // newest first. Empty sport = all sports.
 func (r *repo) listH2HMatches(ctx context.Context, userA, userB, sport string) ([]Match, error) {
@@ -295,7 +374,7 @@ func scanMatchRows(rows pgx.Rows) ([]Match, error) {
 	return matches, rows.Err()
 }
 
-func (r *repo) applySinglesElo(ctx context.Context, sport, winnerID, loserID string) error {
+func (r *repo) applySinglesElo(ctx context.Context, sport, winnerID, loserID, matchID string, playedAt time.Time) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin rating: %w", err)
@@ -322,6 +401,15 @@ func (r *repo) applySinglesElo(ctx context.Context, sport, winnerID, loserID str
 		return err
 	}
 	if err := saveRating(ctx, tx, secondID, sport, nextSecond, second.counted+1); err != nil {
+		return err
+	}
+	if playedAt.IsZero() {
+		playedAt = time.Now().UTC()
+	}
+	if err := insertRatingHistory(ctx, tx, firstID, sport, nextFirst, first.counted+1, matchID, playedAt); err != nil {
+		return err
+	}
+	if err := insertRatingHistory(ctx, tx, secondID, sport, nextSecond, second.counted+1, matchID, playedAt); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -362,6 +450,21 @@ func saveRating(ctx context.Context, tx pgx.Tx, userID, sport string, rating, co
 	return nil
 }
 
+func insertRatingHistory(ctx context.Context, tx pgx.Tx, userID, sport string, rating, counted int, matchID string, playedAt time.Time) error {
+	var matchArg any
+	if matchID != "" {
+		matchArg = matchID
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO user_rating_history (user_id, sport, rating, matches_counted, match_id, played_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		userID, sport, rating, counted, matchArg, playedAt)
+	if err != nil {
+		return fmt.Errorf("rating history: %w", err)
+	}
+	return nil
+}
+
 func (r *repo) listRatings(ctx context.Context, userID string) ([]UserRating, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT sport, rating, matches_counted FROM user_ratings WHERE user_id=$1`, userID)
@@ -378,6 +481,25 @@ func (r *repo) listRatings(ctx context.Context, userID string) ([]UserRating, er
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+func (r *repo) ratingPeakInRange(ctx context.Context, userID string, from, to time.Time) (*WrappedElo, error) {
+	var sport string
+	var rating int
+	var playedAt time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT sport, rating, played_at
+		FROM user_rating_history
+		WHERE user_id=$1 AND played_at >= $2 AND played_at < $3
+		ORDER BY rating DESC, played_at ASC
+		LIMIT 1`, userID, from, to).Scan(&sport, &rating, &playedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("rating peak: %w", err)
+	}
+	return &WrappedElo{Sport: sport, Rating: rating, PlayedAt: &playedAt}, nil
 }
 
 // Sentinel errors.

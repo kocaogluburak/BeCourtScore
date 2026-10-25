@@ -15,6 +15,7 @@ data model, and gotchas for just that area, so you can focus without loading the
 | Tournaments (brackets/draws) | `internal/modules/tournament/CLAUDE.md` |
 | Pro billing / entitlements | `internal/modules/billing/CLAUDE.md` |
 | Push (FCM device tokens) | `internal/modules/notify/CLAUDE.md` |
+| Equipment (string + shoes) | `internal/modules/equipment/CLAUDE.md` |
 | Shared infra (authkit/sse/httpx/db/config) | `internal/platform/CLAUDE.md` |
 
 This root file stays the source of truth for cross-cutting concerns (deploy, env, CORS, pagination).
@@ -66,7 +67,7 @@ Postgres container  (127.0.0.1:5432, not public)
 POST /v1/auth/google     → tokens + user (+ is_new_user)
 GET  /v1/me              → profile (Bearer)
 PATCH /v1/me             → update profile (Bearer) → may push SSE user.updated
-GET  /v1/events          → SSE stream (Bearer): connected, heartbeat, user.updated, friend.*
+GET  /v1/events          → SSE stream (Bearer): connected, heartbeat, user.updated, friend.*, rematch.*
 POST /v1/auth/refresh    → rotate tokens
 POST /v1/auth/logout     → revoke
 GET  /health             → liveness (no auth)
@@ -104,6 +105,28 @@ POST   /v1/live-matches/{id}/decline
 ```
 
 SSE: `match.invite`, `match.started`, `match.score_updated`, plus end/cancel. FCM invite/accept via `notify`. Duplicate open live vs the same registered opponent → 409. Details: `internal/modules/score/CLAUDE.md`.
+
+### Rematch API (score module, Bearer required)
+
+```
+POST   /v1/rematches                 → challenge an accepted friend (201); duplicate pending → 409
+GET    /v1/rematches/incoming        → pending inbox, paginated
+GET    /v1/rematches/outgoing        → sent pending, paginated
+POST   /v1/rematches/{id}/accept     → opponent only; returns Match Setup prefill
+POST   /v1/rematches/{id}/reject     → opponent only
+POST   /v1/rematches/{id}/cancel     → challenger only
+```
+
+SSE: `rematch.received` / `rematch.accepted` / `rematch.rejected` / `rematch.cancelled`. Pending older than 48h expire lazily.
+
+### Invite API (invite module)
+
+```
+POST   /v1/invites                  → mint tracked code {source, sport?} → {code, url} (Bearer, 201)
+GET    /v1/public/invite/{code}     → resolve + increment click_count (public)
+```
+
+`url` is `https://court-score.com/i/{code}`. Optional `invite_code` on `POST /v1/auth/{provider}` attributes a new user (best-effort). Sharing is free.
 
 ### Friends API (social module, Bearer required)
 
@@ -155,6 +178,8 @@ internal/
     social/              friendships + user search → `/v1/friends/*`, `/v1/users/*`
     tournament/          brackets/draws → `/v1/tournaments/*` (implemented)
     notify/              FCM device tokens → `/v1/devices`
+    invite/              tracked invite codes → `/v1/invites`, `/v1/public/invite/{code}`
+    equipment/           Pro gear tracking → `/v1/me/equipment/*`
   migrate/               embedded SQL migrations
   httpapi/               chi router, CORS, mounts modules
 ```

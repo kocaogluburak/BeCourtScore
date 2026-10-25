@@ -17,9 +17,25 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// PlatformToken is a device token plus its registered platform.
+type PlatformToken struct {
+	Token    string
+	Platform string
+}
+
+// LocalizedPush is an i18n-clean payload: iOS uses APNs loc-key, Android is data-only.
+type LocalizedPush struct {
+	Type        string
+	TitleLocKey string
+	BodyLocKey  string
+	LocArgs     []string
+	Data        map[string]string
+}
+
 // Sender delivers data+notification messages to device tokens.
 type Sender interface {
 	Send(ctx context.Context, tokens []string, title, body string, data map[string]string) error
+	SendLocalized(ctx context.Context, tokens []PlatformToken, msg LocalizedPush) error
 }
 
 // NoopSender logs and succeeds — used when FCM credentials are not configured.
@@ -27,6 +43,11 @@ type NoopSender struct{}
 
 func (NoopSender) Send(_ context.Context, tokens []string, title, body string, data map[string]string) error {
 	slog.Info("notify: noop push", "tokens", len(tokens), "title", title, "body", body, "data", data)
+	return nil
+}
+
+func (NoopSender) SendLocalized(_ context.Context, tokens []PlatformToken, msg LocalizedPush) error {
+	slog.Info("notify: noop localized push", "tokens", len(tokens), "type", msg.Type, "title_key", msg.TitleLocKey)
 	return nil
 }
 
@@ -125,6 +146,62 @@ func (s *FCMSender) sendOne(ctx context.Context, accessToken, device, title, bod
 			},
 		},
 	}
+	return s.post(ctx, accessToken, payload)
+}
+
+func (s *FCMSender) SendLocalized(ctx context.Context, tokens []PlatformToken, msg LocalizedPush) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+	tok, err := s.ts.Token()
+	if err != nil {
+		return err
+	}
+	for _, device := range tokens {
+		if err := s.sendLocalizedOne(ctx, tok.AccessToken, device, msg); err != nil {
+			slog.Warn("notify: fcm localized send failed", "err", err, "platform", device.Platform)
+		}
+	}
+	return nil
+}
+
+func (s *FCMSender) sendLocalizedOne(ctx context.Context, accessToken string, device PlatformToken, msg LocalizedPush) error {
+	data := map[string]string{}
+	for k, v := range msg.Data {
+		data[k] = v
+	}
+	if msg.Type != "" {
+		data["type"] = msg.Type
+	}
+	message := map[string]any{
+		"token": device.Token,
+		"data":  data,
+	}
+	switch device.Platform {
+	case "ios":
+		args := make([]string, len(msg.LocArgs))
+		copy(args, msg.LocArgs)
+		message["apns"] = map[string]any{
+			"payload": map[string]any{
+				"aps": map[string]any{
+					"alert": map[string]any{
+						"title-loc-key": msg.TitleLocKey,
+						"loc-key":       msg.BodyLocKey,
+						"loc-args":      args,
+					},
+					"sound": "default",
+				},
+			},
+		}
+	case "android":
+		message["android"] = map[string]any{"priority": "high"}
+	default:
+		return nil
+	}
+	return s.post(ctx, accessToken, map[string]any{"message": message})
+}
+
+func (s *FCMSender) post(ctx context.Context, accessToken string, payload map[string]any) error {
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
 		return err

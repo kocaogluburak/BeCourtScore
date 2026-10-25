@@ -4,8 +4,11 @@ import (
 	"net/http"
 	"strings"
 
+	"courtscore/internal/modules/achievements"
 	"courtscore/internal/modules/billing"
+	"courtscore/internal/modules/equipment"
 	"courtscore/internal/modules/identity"
+	"courtscore/internal/modules/invite"
 	"courtscore/internal/modules/notify"
 	"courtscore/internal/modules/score"
 	"courtscore/internal/modules/social"
@@ -27,6 +30,10 @@ func New(
 	tournamentSvc *tournament.Service,
 	notifySvc *notify.Service,
 	billingSvc *billing.Service,
+	inviteSvc *invite.Service,
+	achievementsSvc *achievements.Service,
+	equipmentSvc *equipment.Service,
+	feedSvc *social.FeedService,
 	hub *sse.Hub,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -44,13 +51,23 @@ func New(
 
 	authMW := authkit.Middleware(cfg.JWTSecret)
 
-	identity.Mount(r, identitySvc, hub, authMW, billingSvc)
+	identity.Mount(r, identitySvc, hub, authMW, billingSvc, inviteSvc)
 	score.Mount(r, scoreSvc, authMW)
 	social.Mount(r, socialSvc, hub, notifySvc, authMW)
+	social.MountFeed(r, feedSvc, authMW)
 	tournament.Mount(r, tournamentSvc, authMW)
 	notify.Mount(r, notifySvc, authMW)
+	if inviteSvc != nil {
+		invite.Mount(r, inviteSvc, authMW)
+	}
 	if billingSvc != nil {
 		billing.Mount(r, billingSvc, authMW)
+	}
+	if achievementsSvc != nil {
+		achievements.Mount(r, achievementsSvc, authMW)
+	}
+	if equipmentSvc != nil {
+		equipment.Mount(r, equipmentSvc, authMW)
 	}
 
 	return r
@@ -72,7 +89,7 @@ func corsMiddleware(origins []string) func(http.Handler) http.Handler {
 					w.Header().Set("Vary", "Origin")
 				}
 			}
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 

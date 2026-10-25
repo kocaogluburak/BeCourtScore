@@ -42,13 +42,14 @@ type Standing struct {
 }
 
 // GroupDetail is the group plus members and this week's standings.
-// Visible only to members.
+// Visible only to members. CurrentSeason is set when the owner started a season.
 type GroupDetail struct {
 	Group
-	Members   []GroupMember `json:"members"`
-	Standings []Standing    `json:"standings"`
-	WeekStart time.Time     `json:"week_start"`
-	WeekEnd   time.Time     `json:"week_end"`
+	Members       []GroupMember  `json:"members"`
+	Standings     []Standing     `json:"standings"`
+	WeekStart     time.Time      `json:"week_start"`
+	WeekEnd       time.Time      `json:"week_end"`
+	CurrentSeason *SeasonSummary `json:"current_season,omitempty"`
 }
 
 type groupStore interface {
@@ -196,11 +197,12 @@ func (s *Service) detailForMember(ctx context.Context, userID string, g Group) (
 	g.MemberCount = len(members)
 	g.IsOwner = g.OwnerID == userID
 	return GroupDetail{
-		Group:     g,
-		Members:   members,
-		Standings: standings,
-		WeekStart: start,
-		WeekEnd:   end,
+		Group:         g,
+		Members:       members,
+		Standings:     standings,
+		WeekStart:     start,
+		WeekEnd:       end,
+		CurrentSeason: s.currentSeasonSummary(ctx, g.ID),
 	}, nil
 }
 

@@ -39,16 +39,29 @@ func (p *fakePush) SendToUser(_ context.Context, userID, _, body string, data ma
 }
 
 type fakeScoreStore struct {
-	match      Match
-	live       LiveMatch
-	matches    []Match
-	insertErr  error
-	getErr     error
-	liveErr    error
-	ended      bool
-	historyID  string
-	openExists bool
-	ratings    map[string]lockedRating
+	match           Match
+	live            LiveMatch
+	matches         []Match
+	insertErr       error
+	getErr          error
+	liveErr         error
+	ended           bool
+	historyID       string
+	openExists      bool
+	ratings         map[string]lockedRating
+	history         []ratingHistoryRow
+	rematches       []RematchChallenge
+	rematchConflict bool
+	summaries       map[string]UserSummary
+}
+
+type ratingHistoryRow struct {
+	UserID  string
+	Sport   string
+	Rating  int
+	Counted int
+	MatchID string
+	PlayedAt time.Time
 }
 
 func (f *fakeScoreStore) insert(_ context.Context, createdBy string, in CreateInput) (Match, error) {
@@ -67,6 +80,9 @@ func (f *fakeScoreStore) insert(_ context.Context, createdBy string, in CreateIn
 		SetsA: in.SetsA, SetsB: in.SetsB, SetScores: scores, WinnerSide: in.WinnerSide, CreatedBy: createdBy,
 		PlayedAt: time.Now(), CreatedAt: time.Now(),
 		PointLog: in.PointLog, DurationSeconds: in.DurationSeconds,
+		AvgHeartRate: in.AvgHeartRate, MaxHeartRate: in.MaxHeartRate,
+		ActiveCalories: in.ActiveCalories, FitnessSource: in.FitnessSource,
+		FitnessSamples: in.FitnessSamples,
 	}
 	f.match = m
 	f.historyID = m.ID
@@ -96,6 +112,37 @@ func (f *fakeScoreStore) listParticipantMatches(_ context.Context, userID, sport
 	return out, nil
 }
 
+func (f *fakeScoreStore) listParticipantMatchesInRange(_ context.Context, userID string, from, to time.Time) ([]Match, error) {
+	out := []Match{}
+	for _, m := range f.matches {
+		if !matchHasUser(m, userID) {
+			continue
+		}
+		if m.PlayedAt.Before(from) || !m.PlayedAt.Before(to) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func (f *fakeScoreStore) firstMatchPerSport(_ context.Context, userID string) ([]SportFirst, error) {
+	earliest := map[string]time.Time{}
+	for _, m := range f.matches {
+		if !matchHasUser(m, userID) {
+			continue
+		}
+		if prev, ok := earliest[m.Sport]; !ok || m.PlayedAt.Before(prev) {
+			earliest[m.Sport] = m.PlayedAt
+		}
+	}
+	out := []SportFirst{}
+	for sport, t := range earliest {
+		out = append(out, SportFirst{Sport: sport, PlayedAt: t})
+	}
+	return out, nil
+}
+
 func (f *fakeScoreStore) listH2HMatches(_ context.Context, userA, userB, sport string) ([]Match, error) {
 	out := []Match{}
 	for _, m := range f.matches {
@@ -115,7 +162,7 @@ func (f *fakeScoreStore) listH2HMatches(_ context.Context, userA, userB, sport s
 
 func ratingKey(userID, sport string) string { return userID + "\x00" + sport }
 
-func (f *fakeScoreStore) applySinglesElo(_ context.Context, sport, winnerID, loserID string) error {
+func (f *fakeScoreStore) applySinglesElo(_ context.Context, sport, winnerID, loserID, matchID string, playedAt time.Time) error {
 	if f.ratings == nil {
 		f.ratings = map[string]lockedRating{}
 	}
@@ -136,7 +183,29 @@ func (f *fakeScoreStore) applySinglesElo(_ context.Context, sport, winnerID, los
 	nextFirst, nextSecond := nextRatings(first.rating, second.rating, first.counted, second.counted, firstWon)
 	f.ratings[ratingKey(firstID, sport)] = lockedRating{rating: nextFirst, counted: first.counted + 1}
 	f.ratings[ratingKey(secondID, sport)] = lockedRating{rating: nextSecond, counted: second.counted + 1}
+	if playedAt.IsZero() {
+		playedAt = time.Now().UTC()
+	}
+	f.history = append(f.history,
+		ratingHistoryRow{UserID: firstID, Sport: sport, Rating: nextFirst, Counted: first.counted + 1, MatchID: matchID, PlayedAt: playedAt},
+		ratingHistoryRow{UserID: secondID, Sport: sport, Rating: nextSecond, Counted: second.counted + 1, MatchID: matchID, PlayedAt: playedAt},
+	)
 	return nil
+}
+
+func (f *fakeScoreStore) ratingPeakInRange(_ context.Context, userID string, from, to time.Time) (*WrappedElo, error) {
+	var rows []WrappedElo
+	for _, h := range f.history {
+		if h.UserID != userID {
+			continue
+		}
+		if h.PlayedAt.Before(from) || !h.PlayedAt.Before(to) {
+			continue
+		}
+		t := h.PlayedAt
+		rows = append(rows, WrappedElo{Sport: h.Sport, Rating: h.Rating, PlayedAt: &t})
+	}
+	return pickEloPeak(rows), nil
 }
 
 func (f *fakeScoreStore) listRatings(_ context.Context, userID string) ([]UserRating, error) {
@@ -277,6 +346,88 @@ func (f *fakeScoreStore) getLiveByShareToken(_ context.Context, token string) (L
 	return LiveMatch{}, ErrNotFound
 }
 
+func (f *fakeScoreStore) insertRematch(_ context.Context, challengerID string, in RematchCreateInput) (RematchChallenge, error) {
+	if f.rematchConflict {
+		return RematchChallenge{}, ErrConflict
+	}
+	adv := true
+	if in.AdvantageEnabled != nil {
+		adv = *in.AdvantageEnabled
+	}
+	ch := RematchChallenge{
+		ID: "rm-1", ChallengerID: challengerID, OpponentID: in.OpponentID,
+		Sport: in.Sport, SetsToWin: in.SetsToWin, AdvantageEnabled: adv,
+		PointsToWin: in.PointsToWin, SetRule: in.SetRule, FinalSet: in.FinalSet,
+		SourceMatchID: in.SourceMatchID, Status: "pending",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	f.rematches = append(f.rematches, ch)
+	return ch, nil
+}
+
+func (f *fakeScoreStore) getRematch(_ context.Context, id string) (RematchChallenge, error) {
+	for _, ch := range f.rematches {
+		if ch.ID == id {
+			return ch, nil
+		}
+	}
+	return RematchChallenge{}, ErrNotFound
+}
+
+func (f *fakeScoreStore) listIncomingRematches(_ context.Context, opponentID string, _, _ int) ([]RematchChallenge, int64, error) {
+	out := []RematchChallenge{}
+	for _, ch := range f.rematches {
+		if ch.OpponentID == opponentID && ch.Status == "pending" {
+			out = append(out, ch)
+		}
+	}
+	return out, int64(len(out)), nil
+}
+
+func (f *fakeScoreStore) listOutgoingRematches(_ context.Context, challengerID string, _, _ int) ([]RematchChallenge, int64, error) {
+	out := []RematchChallenge{}
+	for _, ch := range f.rematches {
+		if ch.ChallengerID == challengerID && ch.Status == "pending" {
+			out = append(out, ch)
+		}
+	}
+	return out, int64(len(out)), nil
+}
+
+func (f *fakeScoreStore) updateRematchStatus(_ context.Context, id, fromStatus, toStatus string) (RematchChallenge, error) {
+	for i, ch := range f.rematches {
+		if ch.ID == id {
+			if ch.Status != fromStatus {
+				return RematchChallenge{}, ErrWrongState
+			}
+			ch.Status = toStatus
+			ch.UpdatedAt = time.Now()
+			f.rematches[i] = ch
+			return ch, nil
+		}
+	}
+	return RematchChallenge{}, ErrNotFound
+}
+
+func (f *fakeScoreStore) expirePendingRematches(_ context.Context, olderThan time.Time) error {
+	for i, ch := range f.rematches {
+		if ch.Status == "pending" && !ch.CreatedAt.IsZero() && ch.CreatedAt.Before(olderThan) {
+			ch.Status = "expired"
+			f.rematches[i] = ch
+		}
+	}
+	return nil
+}
+
+func (f *fakeScoreStore) userSummary(_ context.Context, id string) (UserSummary, error) {
+	if f.summaries != nil {
+		if u, ok := f.summaries[id]; ok {
+			return u, nil
+		}
+	}
+	return UserSummary{ID: id}, nil
+}
+
 func newScoreService(store *fakeScoreStore, friends FriendChecker, push PushSender) *Service {
 	return &Service{repo: store, friends: friends, push: push}
 }
@@ -294,6 +445,61 @@ func TestListUserMatches_RequiresFriendship(t *testing.T) {
 	got, _, err := svc.ListUserMatches(context.Background(), "viewer", "target", ListFilter{}, 20, 0)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("got=%v err=%v", got, err)
+	}
+}
+
+func TestGetMatchPointStats_ProParticipant(t *testing.T) {
+	dur := 40
+	store := &fakeScoreStore{match: Match{
+		ID: "m1", CreatedBy: "u1",
+		PointLog: []PointEvent{
+			{Side: "A", Outcome: "ace", OutcomeSide: "A"},
+			{Side: "B"},
+		},
+		DurationSeconds: &dur,
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{isPro: true})
+
+	got, err := svc.GetMatchPointStats(context.Background(), "u1", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AcesA != 1 || got.TaggedPoints != 1 || got.TotalPoints != 2 || got.DurationSeconds != 40 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestGetMatchPointStats_FreeUserEvenWithinQuota(t *testing.T) {
+	store := &fakeScoreStore{match: Match{ID: "m1", CreatedBy: "u1"}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{isPro: false})
+
+	_, err := svc.GetMatchPointStats(context.Background(), "u1", "m1")
+	if !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetMatchPointStats_StrangerForbidden(t *testing.T) {
+	store := &fakeScoreStore{match: Match{ID: "m1", CreatedBy: "u1"}}
+	svc := newScoreService(store, &fakeFriends{ok: false}, nil)
+	svc.SetGate(&fakeGate{isPro: true})
+
+	_, err := svc.GetMatchPointStats(context.Background(), "stranger", "m1")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestGetMatchPointStats_Missing(t *testing.T) {
+	store := &fakeScoreStore{getErr: ErrNotFound}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{isPro: true})
+
+	_, err := svc.GetMatchPointStats(context.Background(), "u1", "missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
@@ -761,18 +967,42 @@ func TestGetHeadToHead_SelfRejectedAndEmptyOK(t *testing.T) {
 }
 
 type fakeGate struct {
-	err error
+	err   error
+	isPro bool
 }
 
 func (g *fakeGate) AllowCloudSync(context.Context, string) error  { return g.err }
 func (g *fakeGate) AllowStats(context.Context, string) error      { return g.err }
+func (g *fakeGate) AllowAdvancedStats(context.Context, string) error {
+	if g.isPro {
+		return nil
+	}
+	if g.err != nil {
+		return g.err
+	}
+	return entitlement.ErrProRequired
+}
 func (g *fakeGate) AllowPublicLive(context.Context, string) error { return g.err }
 func (g *fakeGate) AllowLargeTournament(context.Context, string, int) error {
 	return g.err
 }
+func (g *fakeGate) AllowLargeLeague(context.Context, string, int) error {
+	return g.err
+}
+func (g *fakeGate) AllowSeasonArchive(context.Context, string) error { return g.err }
+func (g *fakeGate) AllowEquipment(context.Context, string) error {
+	if g.isPro {
+		return nil
+	}
+	if g.err != nil {
+		return g.err
+	}
+	return entitlement.ErrProRequired
+}
 func (g *fakeGate) MaxParticipants(context.Context, string) (int, error) {
 	return 8, nil
 }
+func (g *fakeGate) IsPro(context.Context, string) (bool, error) { return g.isPro, nil }
 
 func TestCreateMatch_CapsPointLog(t *testing.T) {
 	store := &fakeScoreStore{}
@@ -860,6 +1090,24 @@ func TestCreateMatch_RatesRegisteredSingles(t *testing.T) {
 	}
 }
 
+func TestCreateMatch_PickleballAcceptedAndRated(t *testing.T) {
+	a, b := "ua", "ub"
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{}, nil)
+	_, err := svc.CreateMatch(context.Background(), a, CreateInput{
+		Sport: "PICKLEBALL", PlayerAName: "A", PlayerBName: "B",
+		PlayerAUserID: &a, PlayerBUserID: &b,
+		SetsA: 2, SetsB: 0, WinnerSide: "A",
+	})
+	if err != nil {
+		t.Fatalf("pickleball should be accepted: %v", err)
+	}
+	if store.ratings[ratingKey(a, "PICKLEBALL")].rating != 1516 ||
+		store.ratings[ratingKey(b, "PICKLEBALL")].rating != 1484 {
+		t.Fatalf("ratings=%v", store.ratings)
+	}
+}
+
 func TestCreateMatch_GuestAndDoublesSkipRating(t *testing.T) {
 	a := "ua"
 	partner := "Bea"
@@ -930,5 +1178,253 @@ func TestGetUserStats_IncludesSportRating(t *testing.T) {
 		if s.Sport == "TENNIS" && s.Rating != 1516 {
 			t.Fatalf("tennis by_sport=%+v", s)
 		}
+	}
+}
+
+func TestCreateMatch_PersistsAndClampsFitness(t *testing.T) {
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	src := "wear_os"
+	samples := []FitnessSample{{T: 30, HR: intPtr(142), Kcal: intPtr(12)}}
+	_, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+		AvgHeartRate: intPtr(138), MaxHeartRate: intPtr(176), ActiveCalories: intPtr(84),
+		FitnessSource: &src, FitnessSamples: samples,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := store.match
+	if m.AvgHeartRate == nil || *m.AvgHeartRate != 138 || m.MaxHeartRate == nil || *m.MaxHeartRate != 176 {
+		t.Fatalf("hr summary=%+v", m)
+	}
+	if m.ActiveCalories == nil || *m.ActiveCalories != 84 || m.FitnessSource == nil || *m.FitnessSource != "wear_os" {
+		t.Fatalf("kcal/source=%+v", m)
+	}
+	if len(m.FitnessSamples) != 1 || m.FitnessSamples[0].T != 30 {
+		t.Fatalf("samples=%+v", m.FitnessSamples)
+	}
+
+	_, err = svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+		AvgHeartRate: intPtr(-1), MaxHeartRate: intPtr(400), ActiveCalories: intPtr(-8),
+		FitnessSource: strPtr("fitbit"),
+		FitnessSamples: append(samples, make([]FitnessSample, maxFitnessSamples)...),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.match.AvgHeartRate != nil || store.match.MaxHeartRate != nil || store.match.ActiveCalories != nil || store.match.FitnessSource != nil {
+		t.Fatalf("invalid fitness should drop: %+v", store.match)
+	}
+	if len(store.match.FitnessSamples) > maxFitnessSamples {
+		t.Fatalf("samples not capped: %d", len(store.match.FitnessSamples))
+	}
+}
+
+func TestListMyMatches_StripsFitnessSamplesUnlessPro(t *testing.T) {
+	src := "wear_os"
+	match := Match{
+		ID: "m1", CreatedBy: "u1",
+		AvgHeartRate: intPtr(140), ActiveCalories: intPtr(50),
+		FitnessSource: &src,
+		FitnessSamples: []FitnessSample{{T: 10, HR: intPtr(138)}},
+	}
+	store := &fakeScoreStore{matches: []Match{match}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{isPro: false})
+	got, _, err := svc.ListMyMatches(context.Background(), "u1", ListFilter{}, 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].AvgHeartRate == nil || got[0].FitnessSamples != nil {
+		t.Fatalf("free list should keep summary and strip samples: %+v", got)
+	}
+
+	// listForUser returns the fake's backing slice; restore samples for the Pro check.
+	store.matches[0].FitnessSamples = []FitnessSample{{T: 10, HR: intPtr(138)}}
+	svc.SetGate(&fakeGate{isPro: true})
+	got, _, err = svc.ListMyMatches(context.Background(), "u1", ListFilter{}, 20, 0)
+	if err != nil || len(got) != 1 || len(got[0].FitnessSamples) != 1 {
+		t.Fatalf("pro list should keep samples: %+v err=%v", got, err)
+	}
+}
+
+func TestGetMatch_StripsFitnessSamplesUnlessPro(t *testing.T) {
+	src := "apple_watch"
+	store := &fakeScoreStore{match: Match{
+		ID: "m1", CreatedBy: "u1",
+		AvgHeartRate: intPtr(140), MaxHeartRate: intPtr(180), ActiveCalories: intPtr(70),
+		FitnessSource: &src,
+		FitnessSamples: []FitnessSample{{T: 10, HR: intPtr(138)}},
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{isPro: false})
+	got, err := svc.GetMatch(context.Background(), "u1", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AvgHeartRate == nil || *got.AvgHeartRate != 140 || got.ActiveCalories == nil {
+		t.Fatalf("summary should stay free: %+v", got)
+	}
+	if got.FitnessSamples != nil {
+		t.Fatalf("free viewer should not see samples: %+v", got.FitnessSamples)
+	}
+
+	svc.SetGate(&fakeGate{isPro: true})
+	got, err = svc.GetMatch(context.Background(), "u1", "m1")
+	if err != nil || len(got.FitnessSamples) != 1 {
+		t.Fatalf("pro should keep samples: %+v err=%v", got.FitnessSamples, err)
+	}
+}
+
+func TestGetFitnessTrend_GatesAndFilters(t *testing.T) {
+	me, opp := "u1", "u2"
+	store := &fakeScoreStore{matches: []Match{
+		{ID: "m1", Sport: "TENNIS", PlayerAUserID: &me, PlayerBUserID: &opp, PlayedAt: time.Now(), AvgHeartRate: intPtr(130), ActiveCalories: intPtr(40)},
+		{ID: "m2", Sport: "TENNIS", PlayerAUserID: &me, PlayerBUserID: &opp, PlayedAt: time.Now()},
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: false}, nil)
+	_, err := svc.GetFitnessTrend(context.Background(), "stranger", me, "")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-friend err=%v", err)
+	}
+
+	svc = newScoreService(store, &fakeFriends{ok: true}, nil)
+	svc.SetGate(&fakeGate{err: entitlement.ErrProRequired})
+	_, err = svc.GetFitnessTrend(context.Background(), me, me, "")
+	if !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("free err=%v", err)
+	}
+
+	svc.SetGate(&fakeGate{isPro: true})
+	got, err := svc.GetFitnessTrend(context.Background(), me, me, "TENNIS")
+	if err != nil || len(got) != 1 || got[0].MatchID != "m1" {
+		t.Fatalf("trend=%+v err=%v", got, err)
+	}
+}
+
+func TestEndLiveMatch_PersistsFitness(t *testing.T) {
+	store := &fakeScoreStore{live: LiveMatch{ID: "live-1", CreatedBy: "u1", Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B"}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	src := "apple_watch"
+	_, err := svc.EndLiveMatch(context.Background(), "u1", "live-1", LiveEndInput{
+		WinnerSide: "A", AvgHeartRate: intPtr(125), MaxHeartRate: intPtr(168),
+		ActiveCalories: intPtr(55), FitnessSource: &src,
+		FitnessSamples: []FitnessSample{{T: 45, HR: intPtr(125)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.match.AvgHeartRate == nil || *store.match.AvgHeartRate != 125 || store.match.FitnessSource == nil {
+		t.Fatalf("history fitness=%+v", store.match)
+	}
+}
+
+type recActivitySink struct {
+	recorded []Match
+	deleted  []string
+}
+
+func (r *recActivitySink) OnMatchRecorded(_ context.Context, m Match) {
+	r.recorded = append(r.recorded, m)
+}
+func (r *recActivitySink) OnMatchDeleted(_ context.Context, matchID string) {
+	r.deleted = append(r.deleted, matchID)
+}
+
+func TestActivitySink_CreateEndAndDelete(t *testing.T) {
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Sport: "TENNIS", CreatedBy: "u1",
+		PlayerAName: "A", PlayerBName: "B",
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	sink := &recActivitySink{}
+	svc.SetActivitySink(sink)
+
+	if _, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.recorded) != 1 || sink.recorded[0].ID != "hist-1" {
+		t.Fatalf("create recorded=%+v", sink.recorded)
+	}
+
+	if _, err := svc.EndLiveMatch(context.Background(), "u1", "live-1", LiveEndInput{
+		SetsA: 2, SetsB: 0, WinnerSide: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.recorded) != 2 {
+		t.Fatalf("end recorded=%d", len(sink.recorded))
+	}
+
+	if err := svc.DeleteMatch(context.Background(), "u1", "hist-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.deleted) != 1 || sink.deleted[0] != "hist-1" {
+		t.Fatalf("deleted=%v", sink.deleted)
+	}
+}
+
+type recAccruer struct {
+	userIDs []string
+	seconds []int
+}
+
+func (r *recAccruer) AccrueMatchDuration(_ context.Context, userID string, seconds int) {
+	r.userIDs = append(r.userIDs, userID)
+	r.seconds = append(r.seconds, seconds)
+}
+
+func TestUsageAccruer_CreateAndEndSkipNil(t *testing.T) {
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Sport: "TENNIS", CreatedBy: "u1",
+		PlayerAName: "A", PlayerBName: "B",
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	acc := &recAccruer{}
+	svc.SetAccruer(acc)
+
+	if _, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(acc.seconds) != 0 {
+		t.Fatalf("nil duration should skip: %v", acc.seconds)
+	}
+
+	zero := 0
+	if _, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+		DurationSeconds: &zero,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(acc.seconds) != 0 {
+		t.Fatalf("zero duration should skip: %v", acc.seconds)
+	}
+
+	dur := 90
+	if _, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+		DurationSeconds: &dur,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(acc.seconds) != 1 || acc.seconds[0] != 90 || acc.userIDs[0] != "u1" {
+		t.Fatalf("create accrue=%v users=%v", acc.seconds, acc.userIDs)
+	}
+
+	endDur := 40
+	if _, err := svc.EndLiveMatch(context.Background(), "u1", "live-1", LiveEndInput{
+		SetsA: 2, SetsB: 0, WinnerSide: "A", DurationSeconds: &endDur,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(acc.seconds) != 2 || acc.seconds[1] != 40 {
+		t.Fatalf("end accrue=%v", acc.seconds)
 	}
 }

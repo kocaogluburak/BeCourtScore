@@ -70,13 +70,16 @@ func TestEndLiveMatch_Returns200(t *testing.T) {
 	live.WinnerSide = &side
 	svc := &stubService{live: live}
 	h := &handler{svc: svc}
-	body := []byte(`{"sets_a":2,"sets_b":0,"winner_side":"A"}`)
+	body := []byte(`{"sets_a":2,"sets_b":0,"winner_side":"A","avg_heart_rate":132,"fitness_source":"apple_watch"}`)
 	r := authedRequest(http.MethodPost, "/v1/live-matches/live-1/end", body, "user-abc")
 	r.SetPathValue("id", "live-1")
 	w := httptest.NewRecorder()
 	h.endLiveMatch(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if svc.lastEnd.AvgHeartRate == nil || *svc.lastEnd.AvgHeartRate != 132 {
+		t.Fatalf("end fitness=%+v", svc.lastEnd)
 	}
 }
 

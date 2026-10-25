@@ -324,8 +324,9 @@ func (r *repo) areFriends(ctx context.Context, a, b string) (bool, error) {
 
 // Sentinel errors.
 var (
-	ErrNotFound  = errors.New("not found")
-	ErrConflict  = errors.New("conflict")
-	ErrForbidden = errors.New("forbidden")
-	ErrInvalid   = errors.New("invalid input")
+	ErrNotFound       = errors.New("not found")
+	ErrConflict       = errors.New("conflict")
+	ErrForbidden      = errors.New("forbidden")
+	ErrInvalid        = errors.New("invalid input")
+	ErrNoActiveSeason = errors.New("no active season")
 )

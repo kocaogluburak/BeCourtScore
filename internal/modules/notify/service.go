@@ -18,6 +18,7 @@ type store interface {
 	upsert(ctx context.Context, userID, token, platform string) (DeviceToken, error)
 	delete(ctx context.Context, userID, token string) error
 	tokensForUser(ctx context.Context, userID string) ([]string, error)
+	tokensWithPlatform(ctx context.Context, userID string) ([]PlatformToken, error)
 }
 
 // Service manages device tokens and push fan-out.
@@ -65,6 +66,37 @@ func (s *Service) SendToUser(ctx context.Context, userID, title, body string, da
 	}
 	if err := s.sender.Send(ctx, tokens, title, body, data); err != nil {
 		slog.Warn("notify: send failed", "user", userID, "err", err)
+	}
+	return nil
+}
+
+// SendLocalizedToUser fans out an i18n-clean push (APNs loc-key / Android data).
+// Web tokens are skipped. Best-effort — never fails the caller.
+func (s *Service) SendLocalizedToUser(ctx context.Context, userID, typ, titleLocKey, bodyLocKey string, locArgs []string, data map[string]string) error {
+	tokens, err := s.repo.tokensWithPlatform(ctx, userID)
+	if err != nil {
+		slog.Warn("notify: list tokens failed", "user", userID, "err", err)
+		return nil
+	}
+	var mobile []PlatformToken
+	for _, t := range tokens {
+		if t.Platform == "web" {
+			continue
+		}
+		mobile = append(mobile, t)
+	}
+	if len(mobile) == 0 {
+		return nil
+	}
+	msg := LocalizedPush{
+		Type:        typ,
+		TitleLocKey: titleLocKey,
+		BodyLocKey:  bodyLocKey,
+		LocArgs:     locArgs,
+		Data:        data,
+	}
+	if err := s.sender.SendLocalized(ctx, mobile, msg); err != nil {
+		slog.Warn("notify: localized send failed", "user", userID, "err", err)
 	}
 	return nil
 }

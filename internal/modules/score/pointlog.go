@@ -19,23 +19,50 @@ type PointEvent struct {
 	Server    string `json:"sv,omitempty"`
 	TieBreak  bool   `json:"tb,omitempty"`
 	Advantage bool   `json:"adv"`
+	// Outcome is optional point-end tag: "ace" | "df" | "winner" | "ue".
+	Outcome string `json:"o,omitempty"`
+	// OutcomeSide is who the outcome is attributed to: "A" | "B".
+	OutcomeSide string `json:"op,omitempty"`
 }
 
 // MatchPointStats is derived for the match detail screen. It does not feed career W/L.
 type MatchPointStats struct {
-	DurationSeconds int  `json:"duration_seconds"`
-	TotalPoints     int  `json:"total_points"`
-	PointsA         int  `json:"points_a"`
-	PointsB         int  `json:"points_b"`
-	HasServer       bool `json:"has_server"`
-	ServeWonA       int  `json:"serve_won_a"`
-	ServePlayedA    int  `json:"serve_played_a"`
-	ServeWonB       int  `json:"serve_won_b"`
-	ServePlayedB    int  `json:"serve_played_b"`
-	BreakWonA       int  `json:"break_won_a"`
-	BreakFacedA     int  `json:"break_faced_a"`
-	BreakWonB       int  `json:"break_won_b"`
-	BreakFacedB     int  `json:"break_faced_b"`
+	DurationSeconds      int  `json:"duration_seconds"`
+	TotalPoints          int  `json:"total_points"`
+	PointsA              int  `json:"points_a"`
+	PointsB              int  `json:"points_b"`
+	HasServer            bool `json:"has_server"`
+	ServeWonA            int  `json:"serve_won_a"`
+	ServePlayedA         int  `json:"serve_played_a"`
+	ServeWonB            int  `json:"serve_won_b"`
+	ServePlayedB         int  `json:"serve_played_b"`
+	BreakWonA            int  `json:"break_won_a"`
+	BreakFacedA          int  `json:"break_faced_a"`
+	BreakWonB            int  `json:"break_won_b"`
+	BreakFacedB          int  `json:"break_faced_b"`
+	AcesA                int  `json:"aces_a"`
+	AcesB                int  `json:"aces_b"`
+	DoubleFaultsA        int  `json:"double_faults_a"`
+	DoubleFaultsB        int  `json:"double_faults_b"`
+	WinnersA             int  `json:"winners_a"`
+	WinnersB             int  `json:"winners_b"`
+	UnforcedErrorsA      int  `json:"unforced_errors_a"`
+	UnforcedErrorsB      int  `json:"unforced_errors_b"`
+	TaggedPoints         int  `json:"tagged_points"`
+}
+
+func sanitizeOutcome(p *PointEvent) {
+	switch p.Outcome {
+	case "ace", "df", "winner", "ue":
+	default:
+		p.Outcome = ""
+	}
+	if p.OutcomeSide != "A" && p.OutcomeSide != "B" {
+		p.OutcomeSide = ""
+	}
+	if p.Outcome == "" {
+		p.OutcomeSide = ""
+	}
 }
 
 func capPointLog(in []PointEvent) []PointEvent {
@@ -50,6 +77,7 @@ func capPointLog(in []PointEvent) []PointEvent {
 		if len(out) == maxPointLog {
 			break
 		}
+		sanitizeOutcome(&p)
 		out = append(out, p)
 	}
 	return out
@@ -76,6 +104,7 @@ func Summarize(points []PointEvent, durationSeconds *int) MatchPointStats {
 			continue
 		}
 		stats.TotalPoints++
+		tallyOutcome(&stats, p)
 		if p.Server == "" || p.TieBreak {
 			continue
 		}
@@ -115,6 +144,45 @@ func Summarize(points []PointEvent, durationSeconds *int) MatchPointStats {
 		}
 	}
 	return stats
+}
+
+func tallyOutcome(stats *MatchPointStats, p PointEvent) {
+	if p.Outcome == "" {
+		return
+	}
+	side := p.OutcomeSide
+	if side != "A" && side != "B" {
+		return
+	}
+	stats.TaggedPoints++
+	switch p.Outcome {
+	case "ace":
+		if side == "A" {
+			stats.AcesA++
+		} else {
+			stats.AcesB++
+		}
+	case "df":
+		if side == "A" {
+			stats.DoubleFaultsA++
+		} else {
+			stats.DoubleFaultsB++
+		}
+	case "winner":
+		if side == "A" {
+			stats.WinnersA++
+		} else {
+			stats.WinnersB++
+		}
+	case "ue":
+		if side == "A" {
+			stats.UnforcedErrorsA++
+		} else {
+			stats.UnforcedErrorsB++
+		}
+	default:
+		stats.TaggedPoints--
+	}
 }
 
 func isBreakPoint(serverScore, returnScore int, advantage bool) bool {
