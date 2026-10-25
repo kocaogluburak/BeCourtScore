@@ -34,9 +34,16 @@ type fakeStore struct {
 	champion       string
 	statusSet      string
 	seedsSet       []seedAssignment
+	lastCreate     createParams
+	groupMember    bool
 }
 
-func (f *fakeStore) create(context.Context, createParams) (Tournament, error) {
+func (f *fakeStore) create(_ context.Context, in createParams) (Tournament, error) {
+	f.lastCreate = in
+	if f.tournament.ID == "" {
+		f.tournament.ID = "t1"
+	}
+	f.tournament.GroupID = in.GroupID
 	return f.tournament, f.getErr
 }
 func (f *fakeStore) slugExists(context.Context, string) (bool, error) { return false, nil }
@@ -128,6 +135,9 @@ func (f *fakeStore) placeIntoNext(context.Context, string, string) error {
 func (f *fakeStore) remainingMatches(context.Context, string) (int, error) { return f.remaining, nil }
 func (f *fakeStore) participantUserIDs(context.Context, string) ([]string, error) {
 	return nil, nil
+}
+func (f *fakeStore) isGroupMember(context.Context, string, string) (bool, error) {
+	return f.groupMember, nil
 }
 
 func newService(f *fakeStore) *Service { return &Service{store: f, hub: nil} }
@@ -558,6 +568,32 @@ func TestCreateTournament_LargeDrawProRequired(t *testing.T) {
 	})
 	if !errors.Is(err, entitlement.ErrProRequired) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCreateTournament_GroupIDRequiresMembership(t *testing.T) {
+	gid := "g1"
+	store := &fakeStore{tournament: regTournament(), groupMember: false}
+	svc := newService(store)
+	_, err := svc.CreateTournament(context.Background(), "org", CreateInput{
+		Name: "Night", Sport: "PADEL", Format: "AMERICANO", MaxParticipants: 8, GroupID: &gid,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-member err=%v", err)
+	}
+
+	store.groupMember = true
+	got, err := svc.CreateTournament(context.Background(), "org", CreateInput{
+		Name: "Night", Sport: "PADEL", Format: "AMERICANO", MaxParticipants: 8, GroupID: &gid,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.lastCreate.GroupID == nil || *store.lastCreate.GroupID != gid {
+		t.Fatalf("create params group=%v", store.lastCreate.GroupID)
+	}
+	if got.GroupID == nil || *got.GroupID != gid {
+		t.Fatalf("returned group=%v", got.GroupID)
 	}
 }
 

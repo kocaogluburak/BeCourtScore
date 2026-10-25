@@ -77,6 +77,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		SetRule          string     `json:"set_rule"`
 		FinalSet         string     `json:"final_set"`
 		CourtCount       int        `json:"court_count"`
+		GroupID          *string    `json:"group_id"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body")
@@ -95,6 +96,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		SetRule:          body.SetRule,
 		FinalSet:         body.FinalSet,
 		CourtCount:       body.CourtCount,
+		GroupID:          body.GroupID,
 	})
 	if err != nil {
 		writeErr(w, err)

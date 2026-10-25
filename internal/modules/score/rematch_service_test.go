@@ -101,6 +101,50 @@ func TestAcceptRematch_OpponentOnlyPrefill(t *testing.T) {
 	}
 }
 
+func TestAcceptRematch_PublishesChallengerFacingPrefill(t *testing.T) {
+	store := &fakeScoreStore{
+		rematches: []RematchChallenge{{
+			ID: "rm-1", ChallengerID: "u1", OpponentID: "u2", Sport: "PADEL",
+			SetsToWin: 2, AdvantageEnabled: true, PointsToWin: 11, Status: "pending",
+			CreatedAt: time.Now(),
+		}},
+		summaries: map[string]UserSummary{
+			"u1": {ID: "u1", Nickname: nick("Ada")},
+			"u2": {ID: "u2", Nickname: nick("Grace")},
+		},
+	}
+	push := &fakePush{}
+	hub := sse.NewHub()
+	ch, unsub := hub.Subscribe("u1")
+	defer unsub()
+	svc := newScoreService(store, &fakeFriends{ok: true}, push)
+	svc.hub = hub
+	if _, err := svc.AcceptRematch(context.Background(), "u2", "rm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if push.last != "u1" || push.typ != "rematch.accepted" {
+		t.Fatalf("push last=%s typ=%s", push.last, push.typ)
+	}
+	if push.data["opponent_id"] != "u2" || push.data["sport"] != "PADEL" {
+		t.Fatalf("push extras: %+v", push.data)
+	}
+	select {
+	case ev := <-ch:
+		if ev.Type != "rematch.accepted" {
+			t.Fatalf("sse type=%s", ev.Type)
+		}
+		prefill, ok := ev.Data.(RematchPrefill)
+		if !ok {
+			t.Fatalf("sse data %T", ev.Data)
+		}
+		if prefill.Opponent.ID != "u2" {
+			t.Fatalf("challenger SSE opponent=%s want u2 (acceptor)", prefill.Opponent.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected rematch.accepted SSE")
+	}
+}
+
 func TestAcceptRematch_WrongState(t *testing.T) {
 	store := &fakeScoreStore{rematches: []RematchChallenge{{
 		ID: "rm-1", ChallengerID: "u1", OpponentID: "u2", Sport: "TENNIS",

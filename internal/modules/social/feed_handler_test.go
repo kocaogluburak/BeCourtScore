@@ -140,6 +140,15 @@ func TestComments_CreateListDelete(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("empty comment status=%d", w.Code)
 	}
+
+	h.svc = &stubFeed{err: ErrRateLimited}
+	req = authedRequest(http.MethodPost, "/v1/feed/a1/comments", []byte(`{"body":"spam"}`), "u1")
+	req.SetPathValue("activityID", "a1")
+	w = httptest.NewRecorder()
+	h.addComment(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate limit status=%d", w.Code)
+	}
 }
 
 func TestFeedSettings_GetAndPatch(t *testing.T) {

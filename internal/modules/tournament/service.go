@@ -55,6 +55,7 @@ type store interface {
 	placeIntoNext(ctx context.Context, nextMatchID, winnerID string) error
 	remainingMatches(ctx context.Context, tournamentID string) (int, error)
 	participantUserIDs(ctx context.Context, tournamentID string) ([]string, error)
+	isGroupMember(ctx context.Context, groupID, userID string) (bool, error)
 }
 
 // Service is the tournament domain's business logic layer.
@@ -117,6 +118,7 @@ type CreateInput struct {
 	SetRule          string
 	FinalSet         string
 	CourtCount       int
+	GroupID          *string
 }
 
 // ── Create / read ────────────────────────────────────────────────────────────
@@ -180,6 +182,22 @@ func (s *Service) CreateTournament(ctx context.Context, userID string, in Create
 	}
 	in.SetRule, in.FinalSet = rule, final
 
+	if in.GroupID != nil {
+		gid := strings.TrimSpace(*in.GroupID)
+		if gid == "" {
+			in.GroupID = nil
+		} else {
+			in.GroupID = &gid
+			ok, err := s.store.isGroupMember(ctx, gid, userID)
+			if err != nil {
+				return Tournament{}, err
+			}
+			if !ok {
+				return Tournament{}, fmt.Errorf("%w: not a member of this group", ErrForbidden)
+			}
+		}
+	}
+
 	code := makeJoinCode(in.Sport)
 	for attempt := 0; attempt < 6; attempt++ {
 		slug := makeSlug(in.Name)
@@ -198,6 +216,7 @@ func (s *Service) CreateTournament(ctx context.Context, userID string, in Create
 			SetRule:          in.SetRule,
 			FinalSet:         in.FinalSet,
 			CourtCount:       in.CourtCount,
+			GroupID:          in.GroupID,
 		})
 		if errors.Is(err, errSlugTaken) {
 			continue

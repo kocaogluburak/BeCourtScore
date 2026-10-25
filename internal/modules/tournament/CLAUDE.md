@@ -20,7 +20,7 @@ live bracket, and result entry with opponent confirmation. Live updates over SSE
 ## Routes
 
 ```
-POST   /v1/tournaments                         → create (name, sport, format, max_participants)
+POST   /v1/tournaments                         → create (name, sport, format, max_participants, optional group_id)
 GET    /v1/tournaments/mine                     → organizer/participant list, paginated
 GET    /v1/tournaments/{ref}                     → detail (ref = slug); adds is_organizer/has_joined
 DELETE /v1/tournaments/{ref}                     → organizer only, only in REGISTRATION|LOCKED

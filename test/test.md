@@ -25,8 +25,8 @@ make test
 | `internal/modules/tournament/*_test.go` | lifecycle, bracket, Americano rotation, Mexicano re-pair, King of the Court movement, point standings |
 | `internal/modules/social/handler_test.go` | search, profile, send/accept/reject/list/unfriend, group create/delete |
 | `internal/modules/social/service_test.go` | request state machine, reopen-after-reject, AreFriends, profile status |
-| `internal/modules/social/feed_test.go` | FEED-01…06: friend-only list + opt-out, OnMatchRecorded SSE, kudos idempotent/coalesce, comment validate/60s+10-per-day push cap/delete, 403 visibility, OnMatchDeleted cascade |
-| `internal/modules/social/feed_handler_test.go` | GET /v1/feed page envelope, reaction 201/403, comments CRUD, feed-settings |
+| `internal/modules/social/feed_test.go` | FEED-01…06: friend-only list + opt-out, OnMatchRecorded SSE, kudos idempotent/coalesce, comment validate/60s+10-per-day push cap/delete, POST 3s+40/day cap, 403 visibility, OnMatchDeleted cascade |
+| `internal/modules/social/feed_handler_test.go` | GET /v1/feed page envelope, reaction 201/403, comments CRUD + 429, feed-settings |
 | `internal/modules/social/groups_test.go` | ISO week window, non-member match ignored, member match counted, invite-code collision, blank/long name and unknown sport rejected, non-owner cannot delete |
 | `internal/modules/social/seasons_test.go` | season points 3/1/0, doubles, cross-division ignored, window, night placement, promo/relegation ±2 / ±1, next-season newcomers lowest |
 | `internal/modules/social/season_job_test.go` | rollover freezes once + champion + next ACTIVE + SSE; 8+ start 402; archive 402; current free; nil-safe OnMatchFinished |
@@ -43,8 +43,10 @@ make test
 | `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, guest opponent is not invited, duplicate open 409, accept/decline, opponent cancel IN_PROGRESS, stale 24h expire, participant list, push invite, doubles invite body, non-friend partner sends nothing, stats/h2h gates, GetMatchPointStats Pro/forbidden/missing |
 | `internal/modules/score/players_test.go` | side label, identical names kept, invitee list skips starter/blank/duplicate, nameless partner rejected |
 | `internal/modules/score/stats_test.go` | W/L form, rivals, sport filter, recorder-only ignored, H2H viewer perspective, doubles partner |
-| `internal/modules/score/wrapped_test.go` | year aggregate (totals, rival, longest, months, streaks, new sport, empty), handler 400s, free vs AllowStats, year prune + Elo peak, history append |
+| `internal/modules/score/wrapped_test.go` | year aggregate (totals, rival, longest, months, streaks, new sport, empty), handler 400s, free vs AllowStats, year prune + Elo peak, history append, public share 201/200/404 |
 | `internal/modules/score/elo_test.go` | Elo +16 from 1500, K after 20, guest/doubles skipped, sports stay separate |
+| `internal/modules/score/elo_backfill_test.go` | replay singles from 1500, skip doubles, deterministic |
+| `internal/modules/tournament/service_test.go` | group_id requires membership; stored on create |
 | `internal/modules/score/service_test.go` (sport set) | PICKLEBALL accepted by CreateMatch and moves Elo; unknown sport rejected |
 | `internal/modules/tournament/service_test.go` (sport set) | PICKLEBALL accepted as tournament sport in ListMine filter |
 | `internal/modules/notify/handler_test.go` | device register + unregister |

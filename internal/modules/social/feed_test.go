@@ -315,6 +315,8 @@ func newFeed(store *fakeFeedStore, hub *sse.Hub, push PushSender) *FeedService {
 		lastCommentPush: map[string]time.Time{},
 		commentPending:  map[string]int{},
 		commentDay:      map[string]commentDayCount{},
+		lastCommentPost: map[string]time.Time{},
+		commentPostDay:  map[string]commentDayCount{},
 	}
 }
 
@@ -515,6 +517,7 @@ func TestAddComment_ValidatePushRateLimitAndDelete(t *testing.T) {
 	if err := svc.DeleteComment(context.Background(), "friend", actID, c1.ID); err != nil {
 		t.Fatal(err)
 	}
+	now = now.Add(commentPostMinInterval)
 	c2, err := svc.AddComment(context.Background(), "other", actID, "keep")
 	if err != nil {
 		t.Fatal(err)
@@ -522,6 +525,7 @@ func TestAddComment_ValidatePushRateLimitAndDelete(t *testing.T) {
 	if err := svc.DeleteComment(context.Background(), "actor", actID, c2.ID); err != nil {
 		t.Fatal(err)
 	}
+	now = now.Add(commentPostMinInterval)
 	c3, err := svc.AddComment(context.Background(), "other", actID, "nope")
 	if err != nil {
 		t.Fatal(err)
@@ -568,6 +572,47 @@ func TestAddComment_DailyPushCap(t *testing.T) {
 	}
 	if push.count() != commentPushDailyCap+1 {
 		t.Fatalf("next day should push again: %d", push.count())
+	}
+}
+
+func TestAddComment_PostRateLimit(t *testing.T) {
+	store := newFakeFeedStore()
+	store.addUser("actor", "Actor")
+	store.addUser("friend", "Friend")
+	store.addFriend("actor", "friend")
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	svc := newFeed(store, nil, nil)
+	svc.now = func() time.Time { return now }
+	svc.OnMatchRecorded(context.Background(), rec("actor", "m1"))
+	var actID string
+	for id := range store.activities {
+		actID = id
+	}
+
+	if _, err := svc.AddComment(context.Background(), "friend", actID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddComment(context.Background(), "friend", actID, "too-soon"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("interval: %v", err)
+	}
+	now = now.Add(commentPostMinInterval)
+	if _, err := svc.AddComment(context.Background(), "friend", actID, "ok"); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < commentPostDailyCap-2; i++ {
+		now = now.Add(commentPostMinInterval)
+		if _, err := svc.AddComment(context.Background(), "friend", actID, fmt.Sprintf("n%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now = now.Add(commentPostMinInterval)
+	if _, err := svc.AddComment(context.Background(), "friend", actID, "over"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("daily: %v", err)
+	}
+	now = time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	if _, err := svc.AddComment(context.Background(), "friend", actID, "next-day"); err != nil {
+		t.Fatal(err)
 	}
 }
 

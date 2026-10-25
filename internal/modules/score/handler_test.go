@@ -26,6 +26,8 @@ type stubService struct {
 	trend         []FitnessTrendPoint
 	wrapped       WrappedReport
 	wrappedErr    error
+	wrappedShare  WrappedShare
+	publicWrapped WrappedReport
 	gotYear       int
 	lastCreate    CreateInput
 	lastEnd       LiveEndInput
@@ -173,6 +175,28 @@ func (s *stubService) GetHeadToHead(_ context.Context, _, _, _ string) (HeadToHe
 		return HeadToHead{}, s.h2hErr
 	}
 	return s.h2h, nil
+}
+
+func (s *stubService) ShareWrapped(_ context.Context, _ string, year int) (WrappedShare, error) {
+	s.gotYear = year
+	if s.wrappedErr != nil {
+		return WrappedShare{}, s.wrappedErr
+	}
+	if s.wrappedShare.Token == "" {
+		s.wrappedShare = WrappedShare{Token: "tok", URL: "https://court-score.com/wrapped/tok", Year: year}
+	}
+	return s.wrappedShare, nil
+}
+
+func (s *stubService) GetPublicWrapped(_ context.Context, token string) (WrappedReport, error) {
+	if s.wrappedErr != nil {
+		return WrappedReport{}, s.wrappedErr
+	}
+	if s.publicWrapped.Year == 0 {
+		return WrappedReport{}, ErrNotFound
+	}
+	_ = token
+	return s.publicWrapped, nil
 }
 
 func (s *stubService) GetWrapped(_ context.Context, _ string, year int) (WrappedReport, error) {

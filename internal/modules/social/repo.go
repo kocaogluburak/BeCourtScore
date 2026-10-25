@@ -329,4 +329,5 @@ var (
 	ErrForbidden      = errors.New("forbidden")
 	ErrInvalid        = errors.New("invalid input")
 	ErrNoActiveSeason = errors.New("no active season")
+	ErrRateLimited    = errors.New("rate limited")
 )

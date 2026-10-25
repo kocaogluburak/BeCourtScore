@@ -15,7 +15,9 @@ Also exposes player identity aggregates (career stats + head-to-head).
 | `rematch_handler.go` / `rematch.go` / `rematch_repo.go` | Friend rematch challenges (pending inbox + accept prefill) |
 | `service.go` | History rules + live state machine + stats gates; `FriendChecker`; `UserLookup`; optional `PushSender` / `AchievementHook` / `ActivitySink` / `SeasonNotifier` / `UsageAccruer` |
 | `stats.go` | Pure aggregation: W/L, set diff, form, rivals, H2H |
-| `wrapped.go` / `wrapped_handler.go` | Year-in-review: `GET /v1/me/wrapped` (self, FREE) |
+| `wrapped.go` / `wrapped_handler.go` | Year-in-review: `GET /v1/me/wrapped` + public share token |
+| `wrapped_share.go` | `POST /v1/me/wrapped/share`, `GET /v1/public/wrapped/{token}` |
+| `elo_backfill.go` | One-off `BackfillRatingHistory` (`cmd/backfill-elo`) |
 | `repo.go` / `live_repo.go` | Partitioned `matches` + live table |
 | `*_test.go` | handler, live_handler, rematch, service, stats |
 
@@ -32,6 +34,8 @@ GET    /v1/users/{id}/stats    → career W/L + form + rivals (?sport= optional)
 GET    /v1/users/{id}/h2h      → viewer vs target H2H (?sport=); self → 400
 GET    /v1/users/{id}/fitness-trend → per-match HR/kcal (Pro via AllowStats; self/friend)
 GET    /v1/me/wrapped?year=YYYY    → year-in-review (self, FREE — no AllowStats)
+POST   /v1/me/wrapped/share?year=YYYY → mint public token `{token,url,year}` (self, FREE)
+GET    /v1/public/wrapped/{token}  → frozen snapshot (no auth, FREE)
 ```
 
 ## Stats rules
@@ -42,7 +46,7 @@ GET    /v1/me/wrapped?year=YYYY    → year-in-review (self, FREE — no AllowSt
 - `form`: last 5 outcomes from the subject's perspective (`W`/`L`), newest first.
 - `rivals`: top 5 registered opponents by match count (guest opponents excluded).
 - `by_sport`: always returned (all sports with ≥1 participant match), even when `?sport=` filters totals/form/rivals.
-- `rating`: Elo for the filtered sport on the top-level payload (starting value 1500). Each `by_sport` row also carries that sport's rating. Updated only for finished singles matches where both sides are exactly one registered user. Guests, doubles, and tournament social rounds (they are not history rows) do not move it. Deleting a match does not rewind the rating. Each rated singles match also appends two `user_rating_history` rows (migration 027) so Wrapped can report a year peak; `elo_year_end` from `user_ratings` is the fallback when history is empty.
+- `rating`: Elo for the filtered sport on the top-level payload (starting value 1500). Each `by_sport` row also carries that sport's rating. Updated only for finished singles matches where both sides are exactly one registered user. Guests, doubles, and tournament social rounds (they are not history rows) do not move it. Deleting a match does not rewind the rating. Each rated singles match also appends two `user_rating_history` rows (migration 027) so Wrapped can report a year peak; `elo_year_end` from `user_ratings` is the fallback when history is empty. Rows from before 027 are filled by `go run ./cmd/backfill-elo` (migration 033 unique index; idempotent, does not rewrite `user_ratings`).
 - Wrapped year window is UTC `[Y-01-01, Y+1-01-01)`. `has_enough_data` is false below 5 participant matches. Year must be 2023..current calendar year.
 - H2H numbers are from the **viewer's** perspective. Zero matches → 200 with zeros (not 404).
 - Set differential uses `sets_a` / `sets_b` (not per-game `set_scores`).

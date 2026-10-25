@@ -16,9 +16,11 @@ import (
 const (
 	activityTypeMatch   = "match_recorded"
 	reactionKudos       = "kudos"
-	maxCommentLen       = 280
-	commentPushCooldown = 60 * time.Second
-	commentPushDailyCap = 10
+	maxCommentLen         = 280
+	commentPushCooldown   = 60 * time.Second
+	commentPushDailyCap   = 10
+	commentPostMinInterval = 3 * time.Second
+	commentPostDailyCap    = 40
 )
 
 // MatchRecord is the slim snapshot score passes through ActivitySink.
@@ -153,10 +155,12 @@ type FeedService struct {
 	push PushSender
 	now  func() time.Time
 
-	mu              sync.Mutex
-	lastCommentPush map[string]time.Time
-	commentPending  map[string]int
-	commentDay      map[string]commentDayCount
+	mu               sync.Mutex
+	lastCommentPush  map[string]time.Time
+	commentPending   map[string]int
+	commentDay       map[string]commentDayCount
+	lastCommentPost  map[string]time.Time
+	commentPostDay   map[string]commentDayCount
 }
 
 // NewFeedService wires a FeedService to Postgres.
@@ -169,6 +173,8 @@ func NewFeedService(pool *pgxpool.Pool, hub *sse.Hub, push PushSender) *FeedServ
 		lastCommentPush: map[string]time.Time{},
 		commentPending:  map[string]int{},
 		commentDay:      map[string]commentDayCount{},
+		lastCommentPost: map[string]time.Time{},
+		commentPostDay:  map[string]commentDayCount{},
 	}
 }
 
@@ -305,6 +311,9 @@ func (s *FeedService) AddComment(ctx context.Context, callerID, activityID, body
 	if err := s.requireVisible(ctx, callerID, act.ActorID); err != nil {
 		return CommentDTO{}, err
 	}
+	if err := s.allowCommentPost(callerID); err != nil {
+		return CommentDTO{}, err
+	}
 	row, err := s.repo.addComment(ctx, activityID, callerID, body)
 	if err != nil {
 		return CommentDTO{}, err
@@ -369,6 +378,27 @@ func (s *FeedService) SetSettings(ctx context.Context, userID string, optOut boo
 		return FeedSettings{}, err
 	}
 	return FeedSettings{FeedOptOut: optOut}, nil
+}
+
+func (s *FeedService) allowCommentPost(userID string) error {
+	now := s.now()
+	day := now.UTC().Format("2006-01-02")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if last, ok := s.lastCommentPost[userID]; ok && !last.IsZero() && now.Sub(last) < commentPostMinInterval {
+		return fmt.Errorf("%w: comment too soon", ErrRateLimited)
+	}
+	dc := s.commentPostDay[userID]
+	if dc.day != day {
+		dc = commentDayCount{day: day, n: 0}
+	}
+	if dc.n >= commentPostDailyCap {
+		return fmt.Errorf("%w: daily comment cap", ErrRateLimited)
+	}
+	s.lastCommentPost[userID] = now
+	dc.n++
+	s.commentPostDay[userID] = dc
+	return nil
 }
 
 func (s *FeedService) requireVisible(ctx context.Context, callerID, actorID string) error {

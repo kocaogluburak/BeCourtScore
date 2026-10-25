@@ -36,6 +36,7 @@ type Tournament struct {
 	SetRule          string     `json:"set_rule"`
 	FinalSet         string     `json:"final_set"`
 	CourtCount       int        `json:"court_count"`
+	GroupID          *string    `json:"group_id,omitempty"`
 }
 
 // ListFilter narrows a tournament listing.
@@ -107,6 +108,7 @@ type createParams struct {
 	SetRule          string
 	FinalSet         string
 	CourtCount       int
+	GroupID          *string
 }
 
 type seedAssignment struct {
@@ -144,7 +146,7 @@ const tournamentCols = `t.id, t.slug, t.join_code, t.name, t.sport, t.format, t.
 	t.organizer_id, COALESCE(NULLIF(org.nickname,''), org.email, '') AS organizer_name,
 	t.max_participants, t.champion_id, champ.display_name, t.starts_at, t.created_at,
 	COALESCE(pc.confirmed_count, 0),
-	t.sets_to_win, t.advantage_enabled, t.points_to_win, t.set_rule, t.final_set, t.court_count`
+	t.sets_to_win, t.advantage_enabled, t.points_to_win, t.set_rule, t.final_set, t.court_count, t.group_id`
 
 // tournamentFrom is the FROM clause that must accompany tournamentCols.
 // Participant count uses a LATERAL subquery (index-backed) instead of a
@@ -166,25 +168,25 @@ const tournamentReturningCols = `id, slug, join_code, name, sport, format, statu
 	max_participants, champion_id, NULL::text, starts_at, created_at,
 	COALESCE((SELECT COUNT(*) FROM tournament_participants p
 	          WHERE p.tournament_id = tournaments.id AND p.status = 'CONFIRMED'), 0),
-	sets_to_win, advantage_enabled, points_to_win, set_rule, final_set, court_count`
+	sets_to_win, advantage_enabled, points_to_win, set_rule, final_set, court_count, group_id`
 
 func scanTournament(row pgx.Row) (Tournament, error) {
 	var t Tournament
 	err := row.Scan(&t.ID, &t.Slug, &t.JoinCode, &t.Name, &t.Sport, &t.Format, &t.Status,
 		&t.OrganizerID, &t.OrganizerName, &t.MaxParticipants, &t.ChampionID, &t.ChampionName,
 		&t.StartsAt, &t.CreatedAt, &t.ParticipantCount, &t.SetsToWin, &t.AdvantageEnabled, &t.PointsToWin,
-		&t.SetRule, &t.FinalSet, &t.CourtCount)
+		&t.SetRule, &t.FinalSet, &t.CourtCount, &t.GroupID)
 	return t, err
 }
 
 func (r *repo) create(ctx context.Context, in createParams) (Tournament, error) {
 	q := fmt.Sprintf(`
-		INSERT INTO tournaments (slug, join_code, name, sport, format, organizer_id, max_participants, starts_at, sets_to_win, advantage_enabled, points_to_win, set_rule, final_set, court_count)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		INSERT INTO tournaments (slug, join_code, name, sport, format, organizer_id, max_participants, starts_at, sets_to_win, advantage_enabled, points_to_win, set_rule, final_set, court_count, group_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING %s`, tournamentReturningCols)
 	t, err := scanTournament(r.pool.QueryRow(ctx, q,
 		in.Slug, in.JoinCode, in.Name, in.Sport, in.Format, in.OrganizerID, in.MaxParticipants, in.StartsAt,
-		in.SetsToWin, in.AdvantageEnabled, in.PointsToWin, in.SetRule, in.FinalSet, in.CourtCount))
+		in.SetsToWin, in.AdvantageEnabled, in.PointsToWin, in.SetRule, in.FinalSet, in.CourtCount, in.GroupID))
 	if isUniqueViolation(err) {
 		return Tournament{}, errSlugTaken // slug clash; caller retries with a new slug
 	}
@@ -192,6 +194,18 @@ func (r *repo) create(ctx context.Context, in createParams) (Tournament, error) 
 		return Tournament{}, fmt.Errorf("insert tournament: %w", err)
 	}
 	return t, nil
+}
+
+func (r *repo) isGroupMember(ctx context.Context, groupID, userID string) (bool, error) {
+	var ok bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2
+		)`, groupID, userID).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("group member: %w", err)
+	}
+	return ok, nil
 }
 
 func (r *repo) slugExists(ctx context.Context, slug string) (bool, error) {

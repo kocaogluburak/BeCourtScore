@@ -26,6 +26,7 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 		r.Get("/v1/users/{userID}/h2h", h.getHeadToHead)
 		r.Get("/v1/users/{userID}/fitness-trend", h.getFitnessTrend)
 		r.Get("/v1/me/wrapped", h.getMyWrapped)
+		r.Post("/v1/me/wrapped/share", h.shareMyWrapped)
 
 		r.Post("/v1/live-matches", h.startLiveMatch)
 		r.Get("/v1/live-matches", h.listMyOpenLiveMatches)
@@ -46,4 +47,5 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 	})
 
 	r.Get("/v1/public/live/{token}", h.getPublicLiveMatch)
+	r.Get("/v1/public/wrapped/{token}", h.getPublicWrapped)
 }

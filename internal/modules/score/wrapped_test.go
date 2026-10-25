@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -265,6 +266,40 @@ func TestGetMyWrapped_Handler(t *testing.T) {
 	h.getMyWrapped(w, authedRequest(http.MethodGet, "/v1/me/wrapped?year=1999", nil, "user-abc"))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("out of range status=%d", w.Code)
+	}
+}
+
+func TestShareAndPublicWrapped_Handler(t *testing.T) {
+	svc := &stubService{
+		wrappedShare:  WrappedShare{Token: "abc", URL: "https://court-score.com/wrapped/abc", Year: 2026},
+		publicWrapped: WrappedReport{UserID: "u1", Year: 2026, HasEnoughData: true, TotalMatches: 8},
+	}
+	h := &handler{svc: svc}
+
+	w := httptest.NewRecorder()
+	h.shareMyWrapped(w, authedRequest(http.MethodPost, "/v1/me/wrapped/share?year=2026", nil, "user-abc"))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("share status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"token":"abc"`) {
+		t.Fatalf("body=%s", w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/wrapped/abc", nil)
+	req.SetPathValue("token", "abc")
+	h.getPublicWrapped(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"total_matches":8`) {
+		t.Fatalf("public status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	svc.wrappedErr = ErrNotFound
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/v1/public/wrapped/missing", nil)
+	req.SetPathValue("token", "missing")
+	h.getPublicWrapped(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("missing status=%d", w.Code)
 	}
 }
 

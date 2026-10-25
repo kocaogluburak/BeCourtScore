@@ -25,6 +25,7 @@ type fakePush struct {
 	typ    string
 	users  []string
 	bodies []string
+	data   map[string]string
 }
 
 func (p *fakePush) SendToUser(_ context.Context, userID, _, body string, data map[string]string) error {
@@ -32,6 +33,7 @@ func (p *fakePush) SendToUser(_ context.Context, userID, _, body string, data ma
 	p.last = userID
 	p.users = append(p.users, userID)
 	p.bodies = append(p.bodies, body)
+	p.data = data
 	if data != nil {
 		p.typ = data["type"]
 	}
@@ -53,15 +55,6 @@ type fakeScoreStore struct {
 	rematches       []RematchChallenge
 	rematchConflict bool
 	summaries       map[string]UserSummary
-}
-
-type ratingHistoryRow struct {
-	UserID  string
-	Sport   string
-	Rating  int
-	Counted int
-	MatchID string
-	PlayedAt time.Time
 }
 
 func (f *fakeScoreStore) insert(_ context.Context, createdBy string, in CreateInput) (Match, error) {

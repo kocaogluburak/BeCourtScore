@@ -190,7 +190,7 @@ func (s *Service) AcceptRematch(ctx context.Context, userID, id string) (Rematch
 		return RematchPrefill{}, err
 	}
 	updated = s.hydrateRematch(ctx, userID, updated)
-	prefill := RematchPrefill{
+	acceptorPrefill := RematchPrefill{
 		Sport:            updated.Sport,
 		Opponent:         updated.Challenger,
 		SetsToWin:        updated.SetsToWin,
@@ -199,15 +199,36 @@ func (s *Service) AcceptRematch(ctx context.Context, userID, id string) (Rematch
 		SetRule:          updated.SetRule,
 		FinalSet:         updated.FinalSet,
 	}
-	s.publishRematch("rematch.accepted", updated.ChallengerID, prefill)
+	challengerPrefill := RematchPrefill{
+		Sport:            updated.Sport,
+		Opponent:         updated.Opponent,
+		SetsToWin:        updated.SetsToWin,
+		AdvantageEnabled: updated.AdvantageEnabled,
+		PointsToWin:      updated.PointsToWin,
+		SetRule:          updated.SetRule,
+		FinalSet:         updated.FinalSet,
+	}
+	s.publishRematch("rematch.accepted", updated.ChallengerID, challengerPrefill)
+	extras := map[string]string{
+		"type":               "rematch.accepted",
+		"rematch_id":         updated.ID,
+		"opponent_id":        updated.OpponentID,
+		"opponent_name":      displayName(updated.Opponent),
+		"sport":              updated.Sport,
+		"sets_to_win":        fmt.Sprintf("%d", updated.SetsToWin),
+		"advantage_enabled":  fmt.Sprintf("%t", updated.AdvantageEnabled),
+		"points_to_win":      fmt.Sprintf("%d", updated.PointsToWin),
+	}
+	if updated.SetRule != nil {
+		extras["set_rule"] = *updated.SetRule
+	}
+	if updated.FinalSet != nil {
+		extras["final_set"] = *updated.FinalSet
+	}
 	s.pushRematch(ctx, updated.ChallengerID, "Rematch accepted",
 		fmt.Sprintf("%s accepted your rematch", displayName(updated.Opponent)),
-		map[string]string{
-			"type":        "rematch.accepted",
-			"rematch_id":  updated.ID,
-			"opponent_id": updated.OpponentID,
-		})
-	return prefill, nil
+		extras)
+	return acceptorPrefill, nil
 }
 
 // RejectRematch is opponent-only; pending → rejected.

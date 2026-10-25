@@ -33,6 +33,8 @@ func writeFeedErr(w http.ResponseWriter, err error, fallback string) {
 		httpx.Error(w, http.StatusNotFound, "not found")
 	case errors.Is(err, ErrForbidden):
 		httpx.Error(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, ErrRateLimited):
+		httpx.Error(w, http.StatusTooManyRequests, "too many comments")
 	default:
 		httpx.Error(w, http.StatusInternalServerError, fallback)
 	}

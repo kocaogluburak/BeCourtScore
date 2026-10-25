@@ -24,6 +24,8 @@ type svcFacade interface {
 	GetHeadToHead(ctx context.Context, viewerID, targetID, sport string) (HeadToHead, error)
 	GetFitnessTrend(ctx context.Context, viewerID, targetID, sport string) ([]FitnessTrendPoint, error)
 	GetWrapped(ctx context.Context, userID string, year int) (WrappedReport, error)
+	ShareWrapped(ctx context.Context, userID string, year int) (WrappedShare, error)
+	GetPublicWrapped(ctx context.Context, token string) (WrappedReport, error)
 	StartLiveMatch(ctx context.Context, userID string, in LiveStartInput) (LiveMatch, error)
 	GetLiveMatch(ctx context.Context, viewerID, id string) (LiveMatch, error)
 	UpdateLiveMatch(ctx context.Context, userID, id string, u LiveScoreUpdate) (LiveMatch, error)
