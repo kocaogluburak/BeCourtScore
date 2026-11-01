@@ -17,6 +17,7 @@ import (
 type svcFacade interface {
 	CreateTournament(ctx context.Context, userID string, in CreateInput) (Tournament, error)
 	GetTournament(ctx context.Context, userID, slug string) (TournamentView, error)
+	PublicBySlug(ctx context.Context, slug string) (PublicTournament, error)
 	ListMine(ctx context.Context, userID string, f ListFilter, limit, offset int) ([]Tournament, int64, error)
 	JoinTournament(ctx context.Context, userID, slug, code string) (Participant, error)
 	ListParticipants(ctx context.Context, tournamentID string, limit, offset int) ([]Participant, int64, error)
@@ -128,6 +129,17 @@ func (h *handler) listMine(w http.ResponseWriter, r *http.Request) {
 func (h *handler) getBySlug(w http.ResponseWriter, r *http.Request) {
 	userID, _ := authkit.UserIDFromCtx(r.Context())
 	view, err := h.svc.GetTournament(r.Context(), userID, r.PathValue("ref"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, view)
+}
+
+// --- GET /v1/public/tournaments/{slug} ---
+
+func (h *handler) publicBySlug(w http.ResponseWriter, r *http.Request) {
+	view, err := h.svc.PublicBySlug(r.Context(), r.PathValue("slug"))
 	if err != nil {
 		writeErr(w, err)
 		return

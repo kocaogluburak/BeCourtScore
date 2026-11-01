@@ -11,9 +11,11 @@ import (
 )
 
 // Mount registers tournament routes onto the provided router.
-// All routes require an authenticated user (authMW).
+// Authenticated routes require authMW. The public preview omits the join code.
 func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) {
 	h := &handler{svc: svc}
+
+	r.Get("/v1/public/tournaments/{slug}", h.publicBySlug)
 
 	r.Group(func(r chi.Router) {
 		r.Use(authMW)

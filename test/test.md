@@ -22,7 +22,7 @@ make test
 
 | Dosya | Kapsam |
 |---|---|
-| `internal/modules/tournament/*_test.go` | lifecycle, bracket, Americano rotation, Mexicano re-pair, King of the Court movement, point standings |
+| `internal/modules/tournament/*_test.go` | lifecycle, bracket, Americano rotation, Mexicano re-pair, King of the Court movement, point standings, public preview omits join code |
 | `internal/modules/social/handler_test.go` | search, profile, send/accept/reject/list/unfriend, group create/delete |
 | `internal/modules/social/service_test.go` | request state machine, reopen-after-reject, AreFriends, profile status |
 | `internal/modules/social/feed_test.go` | FEED-01…06: friend-only list + opt-out, OnMatchRecorded SSE, kudos idempotent/coalesce, comment validate/60s+10-per-day push cap/delete, POST 3s+40/day cap, 403 visibility, OnMatchDeleted cascade |

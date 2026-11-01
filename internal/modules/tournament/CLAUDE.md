@@ -10,7 +10,7 @@ live bracket, and result entry with opponent confirmation. Live updates over SSE
 
 | File | Role |
 |------|------|
-| `routes.go` | Mounts `/v1/tournaments/*` (all Bearer) |
+| `routes.go` | Mounts `/v1/tournaments/*` (Bearer) and `GET /v1/public/tournaments/{slug}` |
 | `handler.go` | Handlers, DTOs, validation |
 | `service.go` | State machine + view types (`Bracket`, `Standing`), slug/join-code generation, SSE publishing |
 | `bracket.go` | Pure draw builders: `buildSingleElim` (BYE handling) + `buildRoundRobin` (circle method) |
@@ -22,6 +22,7 @@ live bracket, and result entry with opponent confirmation. Live updates over SSE
 ```
 POST   /v1/tournaments                         → create (name, sport, format, max_participants, optional group_id)
 GET    /v1/tournaments/mine                     → organizer/participant list, paginated
+GET    /v1/public/tournaments/{slug}            → preview without auth; no join code or participant names
 GET    /v1/tournaments/{ref}                     → detail (ref = slug); adds is_organizer/has_joined
 DELETE /v1/tournaments/{ref}                     → organizer only, only in REGISTRATION|LOCKED
 POST   /v1/tournaments/{ref}/join                → {join code} → participant

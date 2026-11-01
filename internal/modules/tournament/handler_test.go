@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"courtscore/internal/platform/authkit"
 )
@@ -46,6 +47,12 @@ func (s *stubService) CreateTournament(_ context.Context, userID string, _ Creat
 }
 func (s *stubService) GetTournament(_ context.Context, _, _ string) (TournamentView, error) {
 	return s.view, s.getErr
+}
+func (s *stubService) PublicBySlug(_ context.Context, _ string) (PublicTournament, error) {
+	if s.getErr != nil {
+		return PublicTournament{}, s.getErr
+	}
+	return toPublicTournament(s.tournament), nil
 }
 func (s *stubService) ListMine(_ context.Context, _ string, _ ListFilter, _, _ int) ([]Tournament, int64, error) {
 	return s.tournaments, s.total, s.listErr
@@ -165,6 +172,51 @@ func TestGetBySlug_Returns200(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+}
+
+func TestPublicBySlug_OmitsJoinCode(t *testing.T) {
+	starts := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc := &stubService{tournament: Tournament{
+		ID: "t1", Slug: "summer-open", JoinCode: "PADEL-ABCD",
+		Name: "Summer Open", Sport: "PADEL", Format: "SINGLE_ELIM", Status: "REGISTRATION",
+		OrganizerID: "org", OrganizerName: "Ada",
+		MaxParticipants: 8, ParticipantCount: 3, StartsAt: &starts,
+	}}
+	h := &handler{svc: svc}
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/tournaments/summer-open", nil)
+	req.SetPathValue("slug", "summer-open")
+	w := httptest.NewRecorder()
+	h.publicBySlug(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", w.Code)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["join_code"]; ok {
+		t.Fatalf("join_code leaked: %v", got["join_code"])
+	}
+	if _, ok := got["organizer_id"]; ok {
+		t.Fatalf("organizer_id leaked: %v", got["organizer_id"])
+	}
+	if got["name"] != "Summer Open" || got["organizer_name"] != "Ada" {
+		t.Fatalf("preview: %#v", got)
+	}
+	if got["participant_count"] != float64(3) || got["max_participants"] != float64(8) {
+		t.Fatalf("counts: %#v", got)
+	}
+}
+
+func TestPublicBySlug_NotFound(t *testing.T) {
+	h := &handler{svc: &stubService{getErr: ErrNotFound}}
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/tournaments/missing", nil)
+	req.SetPathValue("slug", "missing")
+	w := httptest.NewRecorder()
+	h.publicBySlug(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d, want 404", w.Code)
 	}
 }
 

@@ -229,6 +229,42 @@ func (s *Service) CreateTournament(ctx context.Context, userID string, in Create
 	return Tournament{}, fmt.Errorf("could not allocate unique slug")
 }
 
+// PublicTournament is the unauthenticated invite preview. It never includes
+// the join code, organizer id, or the participant list.
+type PublicTournament struct {
+	Slug             string     `json:"slug"`
+	Name             string     `json:"name"`
+	Sport            string     `json:"sport"`
+	Format           string     `json:"format"`
+	Status           string     `json:"status"`
+	OrganizerName    string     `json:"organizer_name,omitempty"`
+	MaxParticipants  int        `json:"max_participants"`
+	ParticipantCount int        `json:"participant_count"`
+	StartsAt         *time.Time `json:"starts_at,omitempty"`
+}
+
+func toPublicTournament(t Tournament) PublicTournament {
+	return PublicTournament{
+		Slug:             t.Slug,
+		Name:             t.Name,
+		Sport:            t.Sport,
+		Format:           t.Format,
+		Status:           t.Status,
+		OrganizerName:    t.OrganizerName,
+		MaxParticipants:  t.MaxParticipants,
+		ParticipantCount: t.ParticipantCount,
+		StartsAt:         t.StartsAt,
+	}
+}
+
+func (s *Service) PublicBySlug(ctx context.Context, slug string) (PublicTournament, error) {
+	t, err := s.store.getBySlug(ctx, slug)
+	if err != nil {
+		return PublicTournament{}, err
+	}
+	return toPublicTournament(t), nil
+}
+
 func (s *Service) GetTournament(ctx context.Context, userID, slug string) (TournamentView, error) {
 	t, err := s.store.getBySlug(ctx, slug)
 	if err != nil {

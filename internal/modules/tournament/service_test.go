@@ -171,6 +171,30 @@ func regTournament() Tournament {
 	return Tournament{ID: "t1", Slug: "s", Status: "REGISTRATION", JoinCode: "PADEL-ABCD", MaxParticipants: 4, OrganizerID: "org", Format: "SINGLE_ELIM"}
 }
 
+func TestPublicBySlug_ReturnsPreview(t *testing.T) {
+	tt := regTournament()
+	tt.Name = "Summer"
+	tt.OrganizerName = "Ada"
+	tt.ParticipantCount = 2
+	got, err := newService(&fakeStore{tournament: tt}).PublicBySlug(context.Background(), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "Summer" || got.OrganizerName != "Ada" || got.Slug != "s" || got.ParticipantCount != 2 {
+		t.Fatalf("%#v", got)
+	}
+	if got.MaxParticipants != 4 || got.Format != "SINGLE_ELIM" || got.Status != "REGISTRATION" {
+		t.Fatalf("%#v", got)
+	}
+}
+
+func TestPublicBySlug_Missing(t *testing.T) {
+	_, err := newService(&fakeStore{getErr: ErrNotFound}).PublicBySlug(context.Background(), "missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got %v, want ErrNotFound", err)
+	}
+}
+
 func TestJoin_Happy(t *testing.T) {
 	f := &fakeStore{tournament: regTournament(), countN: 1}
 	_, err := newService(f).JoinTournament(context.Background(), "u1", "s", "padel-abcd") // case-insensitive
