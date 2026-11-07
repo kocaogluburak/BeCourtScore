@@ -297,6 +297,7 @@ func (r *repo) countedMatches(ctx context.Context, userID string) ([]CountedMatc
 func (r *repo) maxRating(ctx context.Context, userID string) (int, error) {
 	var rating *int
 	err := r.pool.QueryRow(ctx, `
+		-- Highest of singles or doubles. A padel doubles rating can earn Elo 1600.
 		SELECT MAX(rating) FROM user_ratings WHERE user_id=$1`, userID).Scan(&rating)
 	if err != nil {
 		return 0, fmt.Errorf("max rating: %w", err)

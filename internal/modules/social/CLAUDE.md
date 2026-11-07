@@ -58,10 +58,10 @@ PATCH  /v1/me/feed-settings             → {feed_opt_out}
 ## Weekly ladder
 
 - Tables `groups` and `group_members`. No match table of its own.
-- Standings read finished `matches` whose sport is the group's sport and whose `played_at` falls in the current ISO week (Monday 00:00 UTC inclusive, next Monday exclusive).
-- A match counts when each side has at least one registered player and every registered player on both sides is a current member. A guest or a non-member drops the match. Doubles award the win and the set difference to every registered player on that side.
-- Rank is wins, then set difference. Elo is separate and is not used here.
-- Americano rounds live on `tournament_matches`, so they never enter the ladder.
+- Standings read finished `matches` whose sport is the group's sport and whose `played_at` falls in the current ISO week (Monday 00:00 UTC inclusive, next Monday exclusive), plus finished Americano / Mexicano / King of the Court nights in that window.
+- A match counts when each side has at least one registered player and every registered player on both sides is a current member. A guest or a non-member drops the match from the ladder; it still stays on the registered player's career. Doubles award the win, the loss, and the set difference to every registered player on that side.
+- Match points are a win 3 and a loss 1, the same constants as a season. A finished social night adds placement points (1st 3, 2nd 2, anyone who played 1) for current members. A night counts when `group_id` is this group, or when `group_id` is empty and every participant is a current member. Rank is points, then set difference, then wins. Elo is separate and is not used here.
+- The weekly board always counts social nights. A season's `count_social_nights` switch is unchanged.
 - Deleting a match removes it from the ladder because the ladder reads matches live. Invite-code collisions are retried; a non-owner cannot delete the group.
 
 ## Friendship model

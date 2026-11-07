@@ -5,17 +5,18 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
-
 )
 
 // ratingHistoryRow is one append-only Elo snapshot produced by a replay.
 type ratingHistoryRow struct {
-	UserID   string
-	Sport    string
-	Rating   int
-	Counted  int
-	MatchID  string
-	PlayedAt time.Time
+	UserID            string
+	Sport             string
+	Discipline        string
+	Rating            int
+	Counted           int
+	MatchID           string
+	TournamentMatchID string
+	PlayedAt          time.Time
 }
 
 // replaySinglesHistory walks finished rated singles in played_at order and

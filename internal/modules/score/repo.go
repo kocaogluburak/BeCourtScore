@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,33 +20,33 @@ type SetScore struct {
 
 // Match is a finished match stored in history.
 type Match struct {
-	ID              string       `json:"id"`
-	Sport           string       `json:"sport"`
-	PlayerAName     string       `json:"player_a_name"`
-	PlayerBName     string       `json:"player_b_name"`
-	PlayerAUserID   *string      `json:"player_a_user_id"`
-	PlayerBUserID   *string      `json:"player_b_user_id"`
-	PlayerA2Name    *string      `json:"player_a2_name,omitempty"`
-	PlayerB2Name    *string      `json:"player_b2_name,omitempty"`
-	PlayerA2UserID  *string      `json:"player_a2_user_id,omitempty"`
-	PlayerB2UserID  *string      `json:"player_b2_user_id,omitempty"`
-	SetsA           int          `json:"sets_a"`
-	SetsB           int          `json:"sets_b"`
-	SetScores       []SetScore   `json:"set_scores,omitempty"`
-	WinnerSide      string       `json:"winner_side"`
-	Winner          string       `json:"winner"` // display name derived from winner_side
-	SetRule         string       `json:"set_rule"`
-	FinalSet        string       `json:"final_set"`
-	PointLog        []PointEvent     `json:"point_log,omitempty"`
-	DurationSeconds *int             `json:"duration_seconds,omitempty"`
-	AvgHeartRate    *int             `json:"avg_heart_rate,omitempty"`
-	MaxHeartRate    *int             `json:"max_heart_rate,omitempty"`
-	ActiveCalories  *int             `json:"active_calories,omitempty"`
-	FitnessSource   *string          `json:"fitness_source,omitempty"`
-	FitnessSamples  []FitnessSample  `json:"fitness_samples,omitempty"`
-	CreatedBy       string           `json:"created_by"`
-	PlayedAt        time.Time        `json:"played_at"`
-	CreatedAt       time.Time        `json:"created_at"`
+	ID              string          `json:"id"`
+	Sport           string          `json:"sport"`
+	PlayerAName     string          `json:"player_a_name"`
+	PlayerBName     string          `json:"player_b_name"`
+	PlayerAUserID   *string         `json:"player_a_user_id"`
+	PlayerBUserID   *string         `json:"player_b_user_id"`
+	PlayerA2Name    *string         `json:"player_a2_name,omitempty"`
+	PlayerB2Name    *string         `json:"player_b2_name,omitempty"`
+	PlayerA2UserID  *string         `json:"player_a2_user_id,omitempty"`
+	PlayerB2UserID  *string         `json:"player_b2_user_id,omitempty"`
+	SetsA           int             `json:"sets_a"`
+	SetsB           int             `json:"sets_b"`
+	SetScores       []SetScore      `json:"set_scores,omitempty"`
+	WinnerSide      string          `json:"winner_side"`
+	Winner          string          `json:"winner"` // display name derived from winner_side
+	SetRule         string          `json:"set_rule"`
+	FinalSet        string          `json:"final_set"`
+	PointLog        []PointEvent    `json:"point_log,omitempty"`
+	DurationSeconds *int            `json:"duration_seconds,omitempty"`
+	AvgHeartRate    *int            `json:"avg_heart_rate,omitempty"`
+	MaxHeartRate    *int            `json:"max_heart_rate,omitempty"`
+	ActiveCalories  *int            `json:"active_calories,omitempty"`
+	FitnessSource   *string         `json:"fitness_source,omitempty"`
+	FitnessSamples  []FitnessSample `json:"fitness_samples,omitempty"`
+	CreatedBy       string          `json:"created_by"`
+	PlayedAt        time.Time       `json:"played_at"`
+	CreatedAt       time.Time       `json:"created_at"`
 }
 
 // CreateInput holds the fields required to record a match.
@@ -388,28 +389,28 @@ func (r *repo) applySinglesElo(ctx context.Context, sport, winnerID, loserID, ma
 		firstID, secondID = loserID, winnerID
 		firstWon = false
 	}
-	first, err := lockRating(ctx, tx, firstID, sport)
+	first, err := lockRating(ctx, tx, firstID, sport, DisciplineSingles)
 	if err != nil {
 		return err
 	}
-	second, err := lockRating(ctx, tx, secondID, sport)
+	second, err := lockRating(ctx, tx, secondID, sport, DisciplineSingles)
 	if err != nil {
 		return err
 	}
 	nextFirst, nextSecond := nextRatings(first.rating, second.rating, first.counted, second.counted, firstWon)
-	if err := saveRating(ctx, tx, firstID, sport, nextFirst, first.counted+1); err != nil {
+	if err := saveRating(ctx, tx, firstID, sport, DisciplineSingles, nextFirst, first.counted+1); err != nil {
 		return err
 	}
-	if err := saveRating(ctx, tx, secondID, sport, nextSecond, second.counted+1); err != nil {
+	if err := saveRating(ctx, tx, secondID, sport, DisciplineSingles, nextSecond, second.counted+1); err != nil {
 		return err
 	}
 	if playedAt.IsZero() {
 		playedAt = time.Now().UTC()
 	}
-	if err := insertRatingHistory(ctx, tx, firstID, sport, nextFirst, first.counted+1, matchID, playedAt); err != nil {
+	if err := insertRatingHistory(ctx, tx, firstID, sport, DisciplineSingles, nextFirst, first.counted+1, matchID, "", playedAt); err != nil {
 		return err
 	}
-	if err := insertRatingHistory(ctx, tx, secondID, sport, nextSecond, second.counted+1, matchID, playedAt); err != nil {
+	if err := insertRatingHistory(ctx, tx, secondID, sport, DisciplineSingles, nextSecond, second.counted+1, matchID, "", playedAt); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -423,42 +424,134 @@ type lockedRating struct {
 	counted int
 }
 
-func lockRating(ctx context.Context, tx pgx.Tx, userID, sport string) (lockedRating, error) {
+func (r *repo) applyDoublesElo(ctx context.Context, sport string, sideA, sideB [2]string, aWon bool, matchID, tournamentMatchID string, playedAt time.Time) error {
+	ids := []string{sideA[0], sideA[1], sideB[0], sideB[1]}
+	sort.Strings(ids)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin doubles rating: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	locked := make(map[string]lockedRating, len(ids))
+	for _, id := range ids {
+		row, err := lockRating(ctx, tx, id, sport, DisciplineDoubles)
+		if err != nil {
+			return err
+		}
+		locked[id] = row
+	}
+	already, err := doublesHistoryExists(ctx, tx, matchID, tournamentMatchID)
+	if err != nil {
+		return err
+	}
+	if already {
+		return nil
+	}
+	var aRows, bRows [2]lockedRating
+	for i := 0; i < 2; i++ {
+		aRows[i] = locked[sideA[i]]
+		bRows[i] = locked[sideB[i]]
+	}
+	nextA, nextB := nextDoublesRatings(aRows, bRows, aWon)
+	if playedAt.IsZero() {
+		playedAt = time.Now().UTC()
+	}
+	updates := []struct {
+		id   string
+		next int
+		prev lockedRating
+	}{
+		{sideA[0], nextA[0], aRows[0]},
+		{sideA[1], nextA[1], aRows[1]},
+		{sideB[0], nextB[0], bRows[0]},
+		{sideB[1], nextB[1], bRows[1]},
+	}
+	for _, u := range updates {
+		if err := saveRating(ctx, tx, u.id, sport, DisciplineDoubles, u.next, u.prev.counted+1); err != nil {
+			return err
+		}
+		if err := insertRatingHistory(ctx, tx, u.id, sport, DisciplineDoubles, u.next, u.prev.counted+1, matchID, tournamentMatchID, playedAt); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit doubles rating: %w", err)
+	}
+	return nil
+}
+
+func doublesHistoryExists(ctx context.Context, tx pgx.Tx, matchID, tournamentMatchID string) (bool, error) {
+	var n int
+	var err error
+	switch {
+	case tournamentMatchID != "":
+		err = tx.QueryRow(ctx, `
+			SELECT COUNT(*) FROM user_rating_history
+			WHERE tournament_match_id = $1`, tournamentMatchID).Scan(&n)
+	case matchID != "":
+		err = tx.QueryRow(ctx, `
+			SELECT COUNT(*) FROM user_rating_history
+			WHERE match_id = $1 AND discipline = $2`, matchID, DisciplineDoubles).Scan(&n)
+	default:
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("doubles history: %w", err)
+	}
+	return n > 0, nil
+}
+
+func lockRating(ctx context.Context, tx pgx.Tx, userID, sport, discipline string) (lockedRating, error) {
+	if discipline == "" {
+		discipline = DisciplineSingles
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO user_ratings (user_id, sport, rating, matches_counted)
-		VALUES ($1, $2, $3, 0)
-		ON CONFLICT (user_id, sport) DO NOTHING`, userID, sport, initialRating); err != nil {
+		INSERT INTO user_ratings (user_id, sport, discipline, rating, matches_counted)
+		VALUES ($1, $2, $3, $4, 0)
+		ON CONFLICT (user_id, sport, discipline) DO NOTHING`, userID, sport, discipline, initialRating); err != nil {
 		return lockedRating{}, fmt.Errorf("seed rating: %w", err)
 	}
 	var row lockedRating
 	err := tx.QueryRow(ctx, `
 		SELECT rating, matches_counted FROM user_ratings
-		WHERE user_id=$1 AND sport=$2 FOR UPDATE`, userID, sport).Scan(&row.rating, &row.counted)
+		WHERE user_id=$1 AND sport=$2 AND discipline=$3 FOR UPDATE`, userID, sport, discipline).Scan(&row.rating, &row.counted)
 	if err != nil {
 		return lockedRating{}, fmt.Errorf("lock rating: %w", err)
 	}
 	return row, nil
 }
 
-func saveRating(ctx context.Context, tx pgx.Tx, userID, sport string, rating, counted int) error {
+func saveRating(ctx context.Context, tx pgx.Tx, userID, sport, discipline string, rating, counted int) error {
+	if discipline == "" {
+		discipline = DisciplineSingles
+	}
 	_, err := tx.Exec(ctx, `
-		UPDATE user_ratings SET rating=$3, matches_counted=$4
-		WHERE user_id=$1 AND sport=$2`, userID, sport, rating, counted)
+		UPDATE user_ratings SET rating=$4, matches_counted=$5
+		WHERE user_id=$1 AND sport=$2 AND discipline=$3`, userID, sport, discipline, rating, counted)
 	if err != nil {
 		return fmt.Errorf("save rating: %w", err)
 	}
 	return nil
 }
 
-func insertRatingHistory(ctx context.Context, tx pgx.Tx, userID, sport string, rating, counted int, matchID string, playedAt time.Time) error {
+func insertRatingHistory(ctx context.Context, tx pgx.Tx, userID, sport, discipline string, rating, counted int, matchID, tournamentMatchID string, playedAt time.Time) error {
+	if discipline == "" {
+		discipline = DisciplineSingles
+	}
 	var matchArg any
 	if matchID != "" {
 		matchArg = matchID
 	}
+	var tournamentArg any
+	if tournamentMatchID != "" {
+		tournamentArg = tournamentMatchID
+	}
 	_, err := tx.Exec(ctx, `
-		INSERT INTO user_rating_history (user_id, sport, rating, matches_counted, match_id, played_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		userID, sport, rating, counted, matchArg, playedAt)
+		INSERT INTO user_rating_history
+			(user_id, sport, discipline, rating, matches_counted, match_id, tournament_match_id, played_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		userID, sport, discipline, rating, counted, matchArg, tournamentArg, playedAt)
 	if err != nil {
 		return fmt.Errorf("rating history: %w", err)
 	}
@@ -467,7 +560,7 @@ func insertRatingHistory(ctx context.Context, tx pgx.Tx, userID, sport string, r
 
 func (r *repo) listRatings(ctx context.Context, userID string) ([]UserRating, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT sport, rating, matches_counted FROM user_ratings WHERE user_id=$1`, userID)
+		SELECT sport, discipline, rating, matches_counted FROM user_ratings WHERE user_id=$1`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list ratings: %w", err)
 	}
@@ -475,7 +568,7 @@ func (r *repo) listRatings(ctx context.Context, userID string) ([]UserRating, er
 	out := []UserRating{}
 	for rows.Next() {
 		var row UserRating
-		if err := rows.Scan(&row.Sport, &row.Rating, &row.MatchesCounted); err != nil {
+		if err := rows.Scan(&row.Sport, &row.Discipline, &row.Rating, &row.MatchesCounted); err != nil {
 			return nil, fmt.Errorf("scan rating: %w", err)
 		}
 		out = append(out, row)
@@ -491,6 +584,7 @@ func (r *repo) ratingPeakInRange(ctx context.Context, userID string, from, to ti
 		SELECT sport, rating, played_at
 		FROM user_rating_history
 		WHERE user_id=$1 AND played_at >= $2 AND played_at < $3
+		  AND discipline = 'SINGLES'
 		ORDER BY rating DESC, played_at ASC
 		LIMIT 1`, userID, from, to).Scan(&sport, &rating, &playedAt)
 	if err != nil {

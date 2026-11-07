@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"courtscore/internal/platform/sse"
 )
@@ -404,10 +405,81 @@ func (s *Service) advanceSocial(ctx context.Context, d matchDetail) error {
 	if len(standings) == 0 {
 		return nil
 	}
+	if err := s.rateSocialDoubles(ctx, t, parts, matches); err != nil {
+		return err
+	}
 	champ := standings[0].ParticipantID
 	s.publishAll(ctx, d.TournamentID, sse.Event{
 		Type: "tournament.completed",
 		Data: map[string]any{"tournament_id": d.TournamentID, "champion_id": champ},
 	})
 	return s.store.setChampion(ctx, d.TournamentID, champ)
+}
+
+func (s *Service) rateSocialDoubles(ctx context.Context, t Tournament, parts []Participant, matches []TournamentMatch) error {
+	if s.doubles == nil {
+		return nil
+	}
+	fixtures := socialDoublesFixtures(parts, matches, time.Now().UTC())
+	if len(fixtures) == 0 {
+		return nil
+	}
+	return s.doubles.RateDoublesFixtures(ctx, t.Sport, fixtures)
+}
+
+// socialDoublesFixtures lists completed 2v2 rounds in play order. A side
+// missing a registered user, a repeated user, or a tied score is skipped.
+func socialDoublesFixtures(parts []Participant, matches []TournamentMatch, playedAt time.Time) []DoublesFixture {
+	userOf := map[string]string{}
+	for _, p := range parts {
+		if p.ID != "" && p.UserID != "" {
+			userOf[p.ID] = p.UserID
+		}
+	}
+	sorted := append([]TournamentMatch(nil), matches...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Round != sorted[j].Round {
+			return sorted[i].Round < sorted[j].Round
+		}
+		return sorted[i].PositionInRound < sorted[j].PositionInRound
+	})
+	out := make([]DoublesFixture, 0, len(sorted))
+	for _, m := range sorted {
+		if m.Status != "COMPLETED" || m.ScoreSummary == nil {
+			continue
+		}
+		aPts, bPts, ok := parseTeamPoints(*m.ScoreSummary)
+		if !ok || aPts == bPts {
+			continue
+		}
+		a1 := userOf[deref(m.ParticipantAID)]
+		a2 := userOf[deref(m.ParticipantA2ID)]
+		b1 := userOf[deref(m.ParticipantBID)]
+		b2 := userOf[deref(m.ParticipantB2ID)]
+		if !fourDistinct(a1, a2, b1, b2) {
+			continue
+		}
+		out = append(out, DoublesFixture{
+			TournamentMatchID: m.ID,
+			PlayedAt:          playedAt,
+			SideA:             [2]string{a1, a2},
+			SideB:             [2]string{b1, b2},
+			AWon:              aPts > bPts,
+		})
+	}
+	return out
+}
+
+func fourDistinct(ids ...string) bool {
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		if id == "" {
+			return false
+		}
+		if _, ok := seen[id]; ok {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	return true
 }

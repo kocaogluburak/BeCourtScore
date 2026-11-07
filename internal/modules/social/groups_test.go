@@ -42,20 +42,20 @@ func TestBuildStandings_WeekMembershipAndDoubles(t *testing.T) {
 		{Sport: "TENNIS", PlayedAt: start.Add(4 * time.Hour), PlayerA: "c", PlayerA2: "a", PlayerB: "b", SetsA: 2, SetsB: 1, WinnerSide: "A"},
 	}
 
-	rows := buildStandings(members, matches, "TENNIS", start, end)
+	rows := buildStandings(members, matches, "TENNIS", start, end, nil)
 	if len(rows) != 3 {
 		t.Fatalf("rows %d", len(rows))
 	}
 	// Ada: singles win (+2) and doubles win (+1) → 2 wins, set diff +3.
 	// Cid: doubles win → 1 win, set diff +1.
 	// Bea: two losses, set diff -3.
-	if rows[0].UserID != "a" || rows[0].Wins != 2 || rows[0].SetDiff != 3 || rows[0].Rank != 1 {
+	if rows[0].UserID != "a" || rows[0].Wins != 2 || rows[0].SetDiff != 3 || rows[0].Rank != 1 || rows[0].Points != 6 {
 		t.Fatalf("first %+v", rows[0])
 	}
-	if rows[1].UserID != "c" || rows[1].Wins != 1 || rows[1].SetDiff != 1 || rows[1].Rank != 2 {
+	if rows[1].UserID != "c" || rows[1].Wins != 1 || rows[1].SetDiff != 1 || rows[1].Rank != 2 || rows[1].Points != 3 {
 		t.Fatalf("second %+v", rows[1])
 	}
-	if rows[2].UserID != "b" || rows[2].Wins != 0 || rows[2].Losses != 2 || rows[2].SetDiff != -3 {
+	if rows[2].UserID != "b" || rows[2].Wins != 0 || rows[2].Losses != 2 || rows[2].SetDiff != -3 || rows[2].Points != 2 {
 		t.Fatalf("third %+v", rows[2])
 	}
 }
@@ -68,9 +68,52 @@ func TestBuildStandings_SetDiffBreaksWinTie(t *testing.T) {
 		{Sport: "TENNIS", PlayedAt: start, PlayerA: "a", PlayerB: "b", SetsA: 2, SetsB: 0, WinnerSide: "A"},
 		{Sport: "TENNIS", PlayedAt: start, PlayerA: "c", PlayerB: "b", SetsA: 2, SetsB: 1, WinnerSide: "A"},
 	}
-	rows := buildStandings(members, matches, "TENNIS", start, end)
+	rows := buildStandings(members, matches, "TENNIS", start, end, nil)
 	if rows[0].UserID != "a" || rows[1].UserID != "c" || rows[2].UserID != "b" {
 		t.Fatalf("order %+v", rows)
+	}
+	if rows[0].Points != 3 || rows[1].Points != 3 {
+		t.Fatalf("points %+v", rows)
+	}
+}
+
+func TestBuildStandings_PointsBeatWinCount(t *testing.T) {
+	start := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 7)
+	members := []GroupMember{
+		{UserID: "a", Name: "A"},
+		{UserID: "b", Name: "B"},
+		{UserID: "c", Name: "C"},
+		{UserID: "d", Name: "D"},
+	}
+	win := func(winner, loser string) ladderMatch {
+		return ladderMatch{Sport: "TENNIS", PlayedAt: start, PlayerA: winner, PlayerB: loser, SetsA: 2, SetsB: 0, WinnerSide: "A"}
+	}
+	matches := []ladderMatch{
+		win("a", "c"), win("a", "d"), win("a", "c"),
+		win("b", "c"), win("b", "d"), win("b", "c"),
+		{Sport: "TENNIS", PlayedAt: start, PlayerA: "c", PlayerB: "b", SetsA: 2, SetsB: 1, WinnerSide: "A"},
+		win("d", "b"),
+	}
+	rows := buildStandings(members, matches, "TENNIS", start, end, nil)
+	if rows[0].UserID != "b" || rows[0].Wins != 3 || rows[0].Losses != 2 || rows[0].Points != 11 {
+		t.Fatalf("first %+v", rows[0])
+	}
+	if rows[1].UserID != "a" || rows[1].Wins != 3 || rows[1].Losses != 0 || rows[1].Points != 9 {
+		t.Fatalf("second %+v", rows[1])
+	}
+}
+
+func TestBuildStandings_SocialNightPoints(t *testing.T) {
+	start := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 7)
+	members := []GroupMember{{UserID: "a", Name: "A"}, {UserID: "b", Name: "B"}}
+	rows := buildStandings(members, nil, "PADEL", start, end, map[string]int{"a": 3, "b": 1})
+	if rows[0].UserID != "a" || rows[0].Points != 3 || rows[0].Wins != 0 {
+		t.Fatalf("first %+v", rows[0])
+	}
+	if rows[1].UserID != "b" || rows[1].Points != 1 {
+		t.Fatalf("second %+v", rows[1])
 	}
 }
 
@@ -79,6 +122,7 @@ type fakeGroups struct {
 	byCode    map[string]string
 	members   map[string]map[string]GroupMember
 	matches   []ladderMatch
+	nights    []socialNight
 	conflicts int
 	next      int
 }
@@ -185,6 +229,10 @@ func (f *fakeGroups) listMembers(_ context.Context, groupID string) ([]GroupMemb
 
 func (f *fakeGroups) listWeekMatches(context.Context, string, string, time.Time, time.Time) ([]ladderMatch, error) {
 	return f.matches, nil
+}
+
+func (f *fakeGroups) listWeekSocialNights(context.Context, string, time.Time, time.Time) ([]socialNight, error) {
+	return f.nights, nil
 }
 
 func TestCreateGroup_RejectsBlankLongNameAndUnknownSport(t *testing.T) {

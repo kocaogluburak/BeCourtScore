@@ -131,15 +131,15 @@ func (h *handler) endLiveMatch(w http.ResponseWriter, r *http.Request) {
 	userID, _ := authkit.UserIDFromCtx(r.Context())
 	id := r.PathValue("id")
 	var body struct {
-		SetsA      int        `json:"sets_a"`
-		SetsB      int        `json:"sets_b"`
-		GamesA     int        `json:"games_a"`
-		GamesB     int        `json:"games_b"`
-		ScoreA     int        `json:"score_a"`
-		ScoreB     int        `json:"score_b"`
-		IsTieBreak bool       `json:"is_tie_break"`
-		WinnerSide      string       `json:"winner_side"`
-		SetScores       []SetScore   `json:"set_scores"`
+		SetsA           int             `json:"sets_a"`
+		SetsB           int             `json:"sets_b"`
+		GamesA          int             `json:"games_a"`
+		GamesB          int             `json:"games_b"`
+		ScoreA          int             `json:"score_a"`
+		ScoreB          int             `json:"score_b"`
+		IsTieBreak      bool            `json:"is_tie_break"`
+		WinnerSide      string          `json:"winner_side"`
+		SetScores       []SetScore      `json:"set_scores"`
 		PointLog        []PointEvent    `json:"point_log"`
 		DurationSeconds *int            `json:"duration_seconds"`
 		AvgHeartRate    *int            `json:"avg_heart_rate"`
@@ -158,7 +158,7 @@ func (h *handler) endLiveMatch(w http.ResponseWriter, r *http.Request) {
 		ScoreA: body.ScoreA, ScoreB: body.ScoreB,
 		IsTieBreak: body.IsTieBreak, WinnerSide: body.WinnerSide,
 		SetScores: body.SetScores,
-		PointLog: body.PointLog, DurationSeconds: body.DurationSeconds,
+		PointLog:  body.PointLog, DurationSeconds: body.DurationSeconds,
 		AvgHeartRate: body.AvgHeartRate, MaxHeartRate: body.MaxHeartRate,
 		ActiveCalories: body.ActiveCalories, FitnessSource: body.FitnessSource,
 		FitnessSamples: body.FitnessSamples,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,6 +151,15 @@ func TestStartLiveMatch_Conflict(t *testing.T) {
 	h.startLiveMatch(w, r)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status=%d", w.Code)
+	}
+}
+
+func TestLiveParticipantSQLUsesJsonbExists(t *testing.T) {
+	if strings.Contains(liveParticipant, "?") {
+		t.Fatalf("jsonb ? operator breaks prepared queries: %s", liveParticipant)
+	}
+	if !strings.Contains(liveParticipant, "jsonb_exists") || !strings.Contains(liveParticipant, "$1::text") {
+		t.Fatalf("participant filter = %s", liveParticipant)
 	}
 }
 

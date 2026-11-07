@@ -36,15 +36,16 @@ make test
 | `internal/modules/score/rematch_service_test.go` | friend gate, self, duplicate 409, accept prefill, reject/cancel, 48h expiry, SSE/push |
 | `internal/modules/invite/handler_test.go` | mint 201 + public resolve 200/404 |
 | `internal/modules/invite/service_test.go` | URL-safe code, click increment, RecordSignup attribution, invalid code noop |
-| `internal/modules/score/live_handler_test.go` | live match start/get/update/end/list/cancel/accept/decline + conflict |
+| `internal/modules/score/live_handler_test.go` | live match start/get/update/end/list/cancel/accept/decline + conflict; open-list SQL uses jsonb_exists (not `?`) |
 | `internal/modules/score/format_test.go` | set_rule / final_set defaults and unknown values |
 | `internal/modules/score/pointlog_test.go` | duration, serve game, break conversion, golden break, old match omits point_log, ace/DF/winner/UE tallies, unknown tags ignored, serve/break unaffected, cap sanitizes outcomes |
 | `internal/modules/score/fitness_test.go` | cap/clamp HR/kcal samples; drop invalid source |
 | `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, guest opponent is not invited, duplicate open 409, accept/decline, opponent cancel IN_PROGRESS, stale 24h expire, participant list, push invite, doubles invite body, non-friend partner sends nothing, stats/h2h gates, GetMatchPointStats Pro/forbidden/missing |
 | `internal/modules/score/players_test.go` | side label, identical names kept, invitee list skips starter/blank/duplicate, nameless partner rejected |
 | `internal/modules/score/stats_test.go` | W/L form, rivals, sport filter, recorder-only ignored, H2H viewer perspective, doubles partner |
+| `internal/modules/score/social_career_test.go` | night placement, social H2H ignores ties, doubles replay skips a guest |
 | `internal/modules/score/wrapped_test.go` | year aggregate (totals, rival, longest, months, streaks, new sport, empty), handler 400s, free vs AllowStats, year prune + Elo peak, history append, public share 201/200/404 |
-| `internal/modules/score/elo_test.go` | Elo +16 from 1500, K after 20, guest/doubles skipped, sports stay separate |
+| `internal/modules/score/elo_test.go` | Elo +16 from 1500, K after 20, guest skips singles, four-player doubles Elo, sports stay separate |
 | `internal/modules/score/elo_backfill_test.go` | replay singles from 1500, skip doubles, deterministic |
 | `internal/modules/tournament/service_test.go` | group_id requires membership; stored on create |
 | `internal/modules/score/service_test.go` (sport set) | PICKLEBALL accepted by CreateMatch and moves Elo; unknown sport rejected |
@@ -84,14 +85,14 @@ make test
 | FIT-01 | done | avg/max HR + kcal + fitness_samples persist; negatives/over-range dropped; samples capped at 240 |
 | FIT-02 | done | GetMatch and ListMyMatches keep summary for free users and strip fitness_samples unless IsPro |
 | FIT-03 | done | GET /v1/users/{id}/fitness-trend 402 free / 200 Pro / 403 non-friend |
-| LIVE-02 | done | list open + cancel without history; creator or IN_PROGRESS opponent |
+| LIVE-02 | done | list open + cancel without history; creator or IN_PROGRESS opponent; list predicate is jsonb_exists |
 | LIVE-03 | done | friend start → PENDING + match.invite; guest → IN_PROGRESS |
 | LIVE-04 | done | accept/decline; list includes opponent; duplicate open → 409; doubles fan-out invite, one decline keeps PENDING |
 | LIVE-05 | done | opponent cancel IN_PROGRESS; PENDING opponent cancel forbidden; 24h stale expire on list/start |
 | HIST-01 | done | create match persists set_scores; invalid lines rejected |
 | SPORT-01 | done | 5 sports accepted (incl. PICKLEBALL) across matches/tournaments/groups; migration 023 widens sport CHECKs |
-| STATS-01 | done | user stats self/friend gate; form + rivals aggregation; recorder-only ignored; doubles partner counts, same-side is not a rival |
-| H2H-01 | done | h2h self → 400; friend gate; empty 200; viewer-perspective W/L |
+| STATS-01 | done | user stats self/friend gate; form + rivals aggregation; recorder-only ignored; doubles partner counts, same-side is not a rival; guest W/L stays; doubles rating and social night summary attach |
+| H2H-01 | done | h2h self → 400; friend gate; empty 200; viewer-perspective W/L; social rounds stay off set diff |
 | REMATCH-01 | done | create requires accepted friend (403 self/non-friend); duplicate pending → 409 |
 | REMATCH-02 | done | accept opponent-only + pending→accepted prefill DTO (no live_match_id) |
 | REMATCH-03 | done | reject/cancel transitions + wrong-state 409 + SSE/push fan-out |
@@ -103,7 +104,7 @@ make test
 | SOCIAL-01…02 | done | list/accept/reject/unfriend handler + service |
 | SOCIAL-03 | done | SendRequest FCM friend.request_received to addressee |
 | SOCIAL-04 | done | AcceptRequest FCM friend.request_accepted to requester |
-| GROUP-01 | done | group create/join/leave/delete; weekly ladder from member matches in the ISO week; non-owner cannot delete |
+| GROUP-01 | done | group create/join/leave/delete; weekly ladder points (win 3 / loss 1 plus social-night placement); non-owner cannot delete |
 | SEASON-01 | done | win 3 / loss 1 / absent 0; cross-division ignored; night 1st/2nd/3rd mapping |
 | SEASON-02 | done | promo top 2 / relegate bottom 2; <6 uses ±1; champion = D1 rank 1; newcomers → lowest |
 | SEASON-03 | done | rollover idempotent freeze + next ACTIVE + SSE season.completed/started |

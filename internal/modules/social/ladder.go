@@ -31,13 +31,14 @@ type ladderMatch struct {
 	WinnerSide string
 }
 
-// buildStandings ranks current members by wins, then set difference,
-// for matches of sport played inside [start, end). A match counts only
-// when each side has at least one registered player and every registered
-// player on both sides is a current member. Guests and non-members drop
-// the match. Each registered player on a side receives that side's win
-// or loss and the same set difference.
-func buildStandings(members []GroupMember, matches []ladderMatch, sport string, start, end time.Time) []Standing {
+// buildStandings ranks current members by league points (win 3 / loss 1,
+// plus social-night placement), then set difference, then wins.
+// A match counts only when each side has at least one registered player and
+// every registered player on both sides is a current member. Guests and
+// non-members drop the match. Each registered player on a side receives
+// that side's win or loss and the same set difference. nightPoints come
+// from finished Americano, Mexicano, and King of the Court nights.
+func buildStandings(members []GroupMember, matches []ladderMatch, sport string, start, end time.Time, nightPoints map[string]int) []Standing {
 	memberSet := make(map[string]GroupMember, len(members))
 	rows := make([]Standing, 0, len(members))
 	index := make(map[string]int, len(members))
@@ -65,6 +66,9 @@ func buildStandings(members []GroupMember, matches []ladderMatch, sport string, 
 		applySide(rows, index, sideA, match.WinnerSide == "A", match.SetsA, match.SetsB)
 		applySide(rows, index, sideB, match.WinnerSide == "B", match.SetsB, match.SetsA)
 	}
+	for i := range rows {
+		rows[i].Points += nightPoints[rows[i].UserID]
+	}
 
 	for i := 0; i < len(rows); i++ {
 		for j := i + 1; j < len(rows); j++ {
@@ -80,11 +84,14 @@ func buildStandings(members []GroupMember, matches []ladderMatch, sport string, 
 }
 
 func standingLess(a, b Standing) bool {
-	if a.Wins != b.Wins {
-		return a.Wins > b.Wins
+	if a.Points != b.Points {
+		return a.Points > b.Points
 	}
 	if a.SetDiff != b.SetDiff {
 		return a.SetDiff > b.SetDiff
+	}
+	if a.Wins != b.Wins {
+		return a.Wins > b.Wins
 	}
 	return a.UserID < b.UserID
 }
@@ -98,8 +105,10 @@ func applySide(rows []Standing, index map[string]int, ids []string, won bool, se
 		rows[i].Matches++
 		if won {
 			rows[i].Wins++
+			rows[i].Points += seasonPointsWin
 		} else {
 			rows[i].Losses++
+			rows[i].Points += seasonPointsLoss
 		}
 		rows[i].SetDiff += setsFor - setsAgainst
 	}

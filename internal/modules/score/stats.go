@@ -7,28 +7,32 @@ const rivalsLimit = 5
 
 // UserStats is the career / form summary for a registered participant.
 type UserStats struct {
-	UserID      string         `json:"user_id"`
-	Sport       *string        `json:"sport"`
-	Matches     int            `json:"matches"`
-	Wins        int            `json:"wins"`
-	Losses      int            `json:"losses"`
-	SetsFor     int            `json:"sets_for"`
-	SetsAgainst int            `json:"sets_against"`
-	SetDiff     int            `json:"set_diff"`
-	Rating      int            `json:"rating,omitempty"`
-	Form        []string       `json:"form"`
-	Rivals      []RivalSummary `json:"rivals"`
-	BySport     []SportStats   `json:"by_sport"`
+	UserID         string         `json:"user_id"`
+	Sport          *string        `json:"sport"`
+	Matches        int            `json:"matches"`
+	Wins           int            `json:"wins"`
+	Losses         int            `json:"losses"`
+	SetsFor        int            `json:"sets_for"`
+	SetsAgainst    int            `json:"sets_against"`
+	SetDiff        int            `json:"set_diff"`
+	Rating         int            `json:"rating,omitempty"`
+	DoublesRating  int            `json:"doubles_rating,omitempty"`
+	SocialNights   int            `json:"social_nights"`
+	SocialBestRank int            `json:"social_best_rank,omitempty"`
+	Form           []string       `json:"form"`
+	Rivals         []RivalSummary `json:"rivals"`
+	BySport        []SportStats   `json:"by_sport"`
 }
 
 // SportStats is per-sport career totals (no form/rivals).
 type SportStats struct {
-	Sport   string `json:"sport"`
-	Matches int    `json:"matches"`
-	Wins    int    `json:"wins"`
-	Losses  int    `json:"losses"`
-	SetDiff int    `json:"set_diff"`
-	Rating  int    `json:"rating,omitempty"`
+	Sport         string `json:"sport"`
+	Matches       int    `json:"matches"`
+	Wins          int    `json:"wins"`
+	Losses        int    `json:"losses"`
+	SetDiff       int    `json:"set_diff"`
+	Rating        int    `json:"rating,omitempty"`
+	DoublesRating int    `json:"doubles_rating,omitempty"`
 }
 
 // RivalSummary is one registered opponent ranked by match count.
@@ -52,6 +56,24 @@ type HeadToHead struct {
 	SetDiff        int        `json:"set_diff"`
 	Form           []string   `json:"form"`
 	LastPlayedAt   *time.Time `json:"last_played_at"`
+	SocialRounds   int        `json:"social_rounds"`
+	SocialWins     int        `json:"social_wins"`
+	SocialLosses   int        `json:"social_losses"`
+}
+
+// SocialNightStats is how many finished club nights a player appeared in,
+// and their best placement (1 is first).
+type SocialNightStats struct {
+	Nights   int
+	BestRank int
+}
+
+// SocialH2H counts completed social rounds where two players were on opposite sides.
+// Point scores are not mixed into set differential.
+type SocialH2H struct {
+	Rounds int
+	Wins   int
+	Losses int
 }
 
 // participantOutcome returns "W" or "L" when userID is a registered player on the match.

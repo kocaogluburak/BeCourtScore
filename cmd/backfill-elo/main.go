@@ -1,8 +1,11 @@
-// One-off Elo history backfill for Wrapped elo_peak.
+// One-off Elo history backfill for Wrapped elo_peak, plus doubles ratings.
 //
 // Replays finished rated singles in played_at order from 1500 and inserts
 // missing user_rating_history rows. Safe and idempotent (unique user_id+match_id).
-// Does not rewrite user_ratings.
+// Does not rewrite SINGLES user_ratings.
+//
+// Also replays registered doubles matches and finished social rounds into
+// DOUBLES ratings. Idempotent. Does not touch SINGLES rows.
 //
 //	cd BeCourtScore && go run ./cmd/backfill-elo
 package main
@@ -43,5 +46,10 @@ func main() {
 		slog.Error("elo backfill", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("elo backfill done", "inserted", n)
+	doubles, err := svc.BackfillDoublesRatings(ctx)
+	if err != nil {
+		slog.Error("doubles elo backfill", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("elo backfill done", "singles_inserted", n, "doubles_inserted", doubles)
 }

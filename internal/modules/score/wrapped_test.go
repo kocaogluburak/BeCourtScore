@@ -392,4 +392,3 @@ func TestApplySinglesElo_AppendsHistoryPerPlayer(t *testing.T) {
 		t.Fatalf("history ratings=%v", seen)
 	}
 }
-

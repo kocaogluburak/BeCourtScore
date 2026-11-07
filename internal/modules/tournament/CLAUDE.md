@@ -53,7 +53,7 @@ POST   /v1/tournaments/matches/{matchId}/confirm → opponent/organizer approve|
 - `MEXICANO` — round 1 is 1+4 vs 2+3; later rounds are appended from point standings.
 - `KING_OF_THE_COURT` — winners move up a court, losers move down. One court stays put and still ranks by points.
 
-Social scores are team points (`16-12`), not set lines. Standings sort by points, then rounds won. `court_count` and `points_to_win` (16/24/32) live on the tournament. Partner ids stay on `tournament_matches` and are not written into `matches`.
+Social scores are team points (`16-12`), not set lines. Standings sort by points, then rounds won. `court_count` and `points_to_win` (16/24/32) live on the tournament. Partner ids stay on `tournament_matches` and are not copied into `matches`. When a social night completes, each finished 2v2 with four registered players is sent to doubles Elo (wired from `cmd/api`; the tournament package does not import score). A repeated `tournament_match_id` does not move the rating again.
 
 Valid sports: TENNIS, PADEL, SQUASH, PING_PONG. `max_participants` default 32, range 2..128.
 

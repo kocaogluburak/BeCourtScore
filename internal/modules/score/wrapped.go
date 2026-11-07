@@ -15,29 +15,29 @@ var wrappedSportOrder = []string{"TENNIS", "PADEL", "SQUASH", "PING_PONG", "PICK
 // WrappedReport is the year-in-review payload for GET /v1/me/wrapped.
 // Labels are client-localized; this DTO is numbers and stable enums only.
 type WrappedReport struct {
-	UserID            string                  `json:"user_id"`
-	Year              int                     `json:"year"`
-	GeneratedAt       time.Time               `json:"generated_at"`
-	HasEnoughData     bool                    `json:"has_enough_data"`
-	TotalMatches      int                     `json:"total_matches"`
-	Wins              int                     `json:"wins"`
-	Losses            int                     `json:"losses"`
-	WinRate           float64                 `json:"win_rate"`
-	SetsFor           int                     `json:"sets_for"`
-	SetsAgainst       int                     `json:"sets_against"`
-	FavoriteSport     string                  `json:"favorite_sport,omitempty"`
-	BySport           []SportStats            `json:"by_sport"`
-	BiggestRival      *RivalSummary           `json:"biggest_rival,omitempty"`
-	LongestMatch      *WrappedMatchHighlight  `json:"longest_match,omitempty"`
-	BusiestMonth      *WrappedMonth           `json:"busiest_month,omitempty"`
-	MonthlyMatches    []int                   `json:"monthly_matches"`
-	CurrentStreak     *WrappedStreak          `json:"current_streak,omitempty"`
-	LongestWinStreak  int                     `json:"longest_win_streak"`
-	EloPeak           *WrappedElo             `json:"elo_peak,omitempty"`
-	EloYearEnd        *WrappedElo             `json:"elo_year_end,omitempty"`
-	FirstMatchOfYear  *WrappedFirstMatch      `json:"first_match_of_year,omitempty"`
-	SportsPlayedCount int                     `json:"sports_played_count"`
-	NewSportsTried    []string                `json:"new_sports_tried"`
+	UserID            string                 `json:"user_id"`
+	Year              int                    `json:"year"`
+	GeneratedAt       time.Time              `json:"generated_at"`
+	HasEnoughData     bool                   `json:"has_enough_data"`
+	TotalMatches      int                    `json:"total_matches"`
+	Wins              int                    `json:"wins"`
+	Losses            int                    `json:"losses"`
+	WinRate           float64                `json:"win_rate"`
+	SetsFor           int                    `json:"sets_for"`
+	SetsAgainst       int                    `json:"sets_against"`
+	FavoriteSport     string                 `json:"favorite_sport,omitempty"`
+	BySport           []SportStats           `json:"by_sport"`
+	BiggestRival      *RivalSummary          `json:"biggest_rival,omitempty"`
+	LongestMatch      *WrappedMatchHighlight `json:"longest_match,omitempty"`
+	BusiestMonth      *WrappedMonth          `json:"busiest_month,omitempty"`
+	MonthlyMatches    []int                  `json:"monthly_matches"`
+	CurrentStreak     *WrappedStreak         `json:"current_streak,omitempty"`
+	LongestWinStreak  int                    `json:"longest_win_streak"`
+	EloPeak           *WrappedElo            `json:"elo_peak,omitempty"`
+	EloYearEnd        *WrappedElo            `json:"elo_year_end,omitempty"`
+	FirstMatchOfYear  *WrappedFirstMatch     `json:"first_match_of_year,omitempty"`
+	SportsPlayedCount int                    `json:"sports_played_count"`
+	NewSportsTried    []string               `json:"new_sports_tried"`
 }
 
 // WrappedMatchHighlight is the longest battle of the year.
@@ -125,6 +125,9 @@ func opponentDisplayName(m Match, userID string) string {
 func pickEloYearEnd(favorite string, ratings []UserRating) *WrappedElo {
 	bySport := map[string]int{}
 	for _, row := range ratings {
+		if !isSinglesDiscipline(row.Discipline) {
+			continue
+		}
 		bySport[row.Sport] = row.Rating
 	}
 	if favorite != "" {

@@ -77,13 +77,13 @@ type LiveScoreUpdate struct {
 }
 
 type LiveEndInput struct {
-	SetsA      int
-	SetsB      int
-	GamesA     int
-	GamesB     int
-	ScoreA     int
-	ScoreB     int
-	IsTieBreak bool
+	SetsA           int
+	SetsB           int
+	GamesA          int
+	GamesB          int
+	ScoreA          int
+	ScoreB          int
+	IsTieBreak      bool
 	WinnerSide      string
 	SetScores       []SetScore
 	PointLog        []PointEvent
@@ -275,9 +275,10 @@ func (r *repo) acceptLive(ctx context.Context, id string) (LiveMatch, error) {
 	return m, err
 }
 
+// jsonb_exists, not the ? operator: prepared statements cannot infer $1 for `jsonb ? unknown`.
 const liveParticipant = `(created_by = $1 OR (
 		(player_a_user_id = $1 OR player_b_user_id = $1 OR player_a2_user_id = $1 OR player_b2_user_id = $1)
-		AND NOT (COALESCE(declined_user_ids, '[]'::jsonb) ? $1)
+		AND NOT jsonb_exists(COALESCE(declined_user_ids, '[]'::jsonb), $1::text)
 	))`
 
 func (r *repo) listOpenLiveForParticipant(ctx context.Context, userID string, limit, offset int) ([]LiveMatch, int64, error) {

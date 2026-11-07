@@ -39,6 +39,7 @@ type Standing struct {
 	Losses  int    `json:"losses"`
 	Matches int    `json:"matches"`
 	SetDiff int    `json:"set_diff"`
+	Points  int    `json:"points"`
 }
 
 // GroupDetail is the group plus members and this week's standings.
@@ -63,6 +64,7 @@ type groupStore interface {
 	deleteGroup(ctx context.Context, groupID string) error
 	listMembers(ctx context.Context, groupID string) ([]GroupMember, error)
 	listWeekMatches(ctx context.Context, groupID, sport string, start, end time.Time) ([]ladderMatch, error)
+	listWeekSocialNights(ctx context.Context, groupID string, start, end time.Time) ([]socialNight, error)
 }
 
 func (s *Service) clock() time.Time {
@@ -190,7 +192,15 @@ func (s *Service) detailForMember(ctx context.Context, userID string, g Group) (
 	if err != nil {
 		return GroupDetail{}, err
 	}
-	standings := buildStandings(members, matches, g.Sport, start, end)
+	nights, err := s.groups.listWeekSocialNights(ctx, g.ID, start, end)
+	if err != nil {
+		return GroupDetail{}, err
+	}
+	roster := make([]seasonMember, len(members))
+	for i, m := range members {
+		roster[i] = seasonMember{UserID: m.UserID, Name: m.Name}
+	}
+	standings := buildStandings(members, matches, g.Sport, start, end, nightsToPoints(nights, g.ID, roster, start, end))
 	if standings == nil {
 		standings = []Standing{}
 	}

@@ -83,7 +83,10 @@ type store interface {
 	firstMatchPerSport(ctx context.Context, userID string) ([]SportFirst, error)
 	listH2HMatches(ctx context.Context, userA, userB, sport string) ([]Match, error)
 	applySinglesElo(ctx context.Context, sport, winnerID, loserID, matchID string, playedAt time.Time) error
+	applyDoublesElo(ctx context.Context, sport string, sideA, sideB [2]string, aWon bool, matchID, tournamentMatchID string, playedAt time.Time) error
 	listRatings(ctx context.Context, userID string) ([]UserRating, error)
+	listUserSocialNights(ctx context.Context, userID, sport string) (SocialNightStats, error)
+	listSocialH2H(ctx context.Context, viewerID, opponentID, sport string) (SocialH2H, error)
 	ratingPeakInRange(ctx context.Context, userID string, from, to time.Time) (*WrappedElo, error)
 	insertLive(ctx context.Context, createdBy string, in LiveStartInput) (LiveMatch, error)
 	getLiveByID(ctx context.Context, id string) (LiveMatch, error)
@@ -370,7 +373,14 @@ func (s *Service) GetUserStats(ctx context.Context, viewerID, targetID, sport st
 	if err != nil {
 		return UserStats{}, err
 	}
-	return attachRatings(aggregateUserStats(targetID, sport, matches), ratings), nil
+	nights, err := s.repo.listUserSocialNights(ctx, targetID, sport)
+	if err != nil {
+		return UserStats{}, err
+	}
+	stats := attachRatings(aggregateUserStats(targetID, sport, matches), ratings)
+	stats.SocialNights = nights.Nights
+	stats.SocialBestRank = nights.BestRank
+	return stats, nil
 }
 
 // GetFitnessTrend returns per-match HR/calorie summaries for a Pro viewer
@@ -410,15 +420,51 @@ func (s *Service) GetFitnessTrend(ctx context.Context, viewerID, targetID, sport
 }
 
 func (s *Service) rateFinished(ctx context.Context, m Match) error {
-	winner, loser, ok := singlesEloPair(m)
-	if !ok {
-		return nil
-	}
 	playedAt := m.PlayedAt
 	if playedAt.IsZero() {
 		playedAt = time.Now().UTC()
 	}
-	return s.repo.applySinglesElo(ctx, m.Sport, winner, loser, m.ID, playedAt)
+	if winner, loser, ok := singlesEloPair(m); ok {
+		if err := s.repo.applySinglesElo(ctx, m.Sport, winner, loser, m.ID, playedAt); err != nil {
+			return err
+		}
+	}
+	if sideA, sideB, aWon, ok := doublesEloSides(m); ok {
+		return s.repo.applyDoublesElo(ctx, m.Sport, sideA, sideB, aWon, m.ID, "", playedAt)
+	}
+	return nil
+}
+
+// DoublesFixture is one completed 2v2 between four registered users.
+// TournamentMatchID makes a social round idempotent.
+type DoublesFixture struct {
+	TournamentMatchID string
+	PlayedAt          time.Time
+	SideA             [2]string
+	SideB             [2]string
+	AWon              bool
+}
+
+// RateDoublesFixtures applies doubles Elo for completed social rounds.
+// A fixture that is not four distinct users is skipped. A tournament match
+// that was already rated does not move the rating again.
+func (s *Service) RateDoublesFixtures(ctx context.Context, sport string, fixtures []DoublesFixture) error {
+	if !validSports[sport] {
+		return fmt.Errorf("%w: unknown sport %q", ErrInvalid, sport)
+	}
+	for _, f := range fixtures {
+		if !distinctIDs(f.SideA[0], f.SideA[1], f.SideB[0], f.SideB[1]) {
+			continue
+		}
+		playedAt := f.PlayedAt
+		if playedAt.IsZero() {
+			playedAt = time.Now().UTC()
+		}
+		if err := s.repo.applyDoublesElo(ctx, sport, f.SideA, f.SideB, f.AWon, "", f.TournamentMatchID, playedAt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetWrapped returns the caller's year-in-review. Self only, FREE — does not
@@ -469,7 +515,15 @@ func (s *Service) GetHeadToHead(ctx context.Context, viewerID, targetID, sport s
 	if err != nil {
 		return HeadToHead{}, err
 	}
-	return aggregateHeadToHead(viewerID, targetID, sport, matches), nil
+	social, err := s.repo.listSocialH2H(ctx, viewerID, targetID, sport)
+	if err != nil {
+		return HeadToHead{}, err
+	}
+	out := aggregateHeadToHead(viewerID, targetID, sport, matches)
+	out.SocialRounds = social.Rounds
+	out.SocialWins = social.Wins
+	out.SocialLosses = social.Losses
+	return out, nil
 }
 
 // StartLiveMatch creates a live session. Registered opponents require friendship

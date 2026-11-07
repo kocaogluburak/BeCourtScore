@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"courtscore/internal/platform/entitlement"
 )
@@ -155,7 +156,7 @@ func (g *fakeTourGate) AllowLargeTournament(context.Context, string, int) error 
 func (g *fakeTourGate) AllowLargeLeague(context.Context, string, int) error     { return g.err }
 func (g *fakeTourGate) AllowSeasonArchive(context.Context, string) error        { return g.err }
 func (g *fakeTourGate) AllowEquipment(context.Context, string) error            { return g.err }
-	func (g *fakeTourGate) MaxParticipants(context.Context, string) (int, error) {
+func (g *fakeTourGate) MaxParticipants(context.Context, string) (int, error) {
 	if g.max == 0 {
 		return 8, nil
 	}
@@ -734,4 +735,77 @@ func TestSubmitResult_KingOneCourtKeepsField(t *testing.T) {
 func sp(s string) *string {
 	v := s
 	return &v
+}
+
+type fakeDoublesRater struct {
+	calls    int
+	sport    string
+	fixtures []DoublesFixture
+}
+
+func (f *fakeDoublesRater) RateDoublesFixtures(_ context.Context, sport string, fixtures []DoublesFixture) error {
+	f.calls++
+	f.sport = sport
+	f.fixtures = append([]DoublesFixture(nil), fixtures...)
+	return nil
+}
+
+func TestSubmitResult_CompletedNightRatesDoublesOnce(t *testing.T) {
+	a, b := "p1", "p3"
+	score := "16-12"
+	f := &fakeStore{
+		tournament: Tournament{ID: "t1", Sport: "PADEL", Format: "AMERICANO", CourtCount: 1, OrganizerID: "org"},
+		confirmed: []Participant{
+			{ID: "p1", UserID: "u1", DisplayName: "A"},
+			{ID: "p2", UserID: "u2", DisplayName: "B"},
+			{ID: "p3", UserID: "u3", DisplayName: "C"},
+			{ID: "p4", UserID: "u4", DisplayName: "D"},
+		},
+		md: matchDetail{
+			ID: "m1", TournamentID: "t1", Status: "READY", TournamentStatus: "ONGOING",
+			Format: "AMERICANO", OrganizerID: "org",
+			ParticipantAID: &a, ParticipantA2ID: sp("p2"),
+			ParticipantBID: &b, ParticipantB2ID: sp("p4"),
+		},
+		matches: []TournamentMatch{{
+			ID: "m1", Round: 1, PositionInRound: 1, Status: "READY",
+			ParticipantAID: &a, ParticipantA2ID: sp("p2"),
+			ParticipantBID: &b, ParticipantB2ID: sp("p4"),
+		}},
+		remaining: 0,
+	}
+	rater := &fakeDoublesRater{}
+	svc := newService(f)
+	svc.SetDoublesRater(rater)
+	if _, err := svc.SubmitResult(context.Background(), "org", "m1", "", score); err != nil {
+		t.Fatal(err)
+	}
+	if f.champion == "" {
+		t.Fatal("night did not finish")
+	}
+	if rater.calls != 1 || rater.sport != "PADEL" || len(rater.fixtures) != 1 {
+		t.Fatalf("rater calls=%d sport=%s fixtures=%d", rater.calls, rater.sport, len(rater.fixtures))
+	}
+	got := rater.fixtures[0]
+	if got.TournamentMatchID != "m1" || !got.AWon || got.SideA != [2]string{"u1", "u2"} || got.SideB != [2]string{"u3", "u4"} {
+		t.Fatalf("fixture %+v", got)
+	}
+
+	played := time.Date(2026, 5, 1, 20, 0, 0, 0, time.UTC)
+	again := socialDoublesFixtures(f.confirmed, []TournamentMatch{{
+		ID: "m1", Round: 1, Status: "COMPLETED", ScoreSummary: &score,
+		ParticipantAID: &a, ParticipantA2ID: sp("p2"),
+		ParticipantBID: &b, ParticipantB2ID: sp("p4"),
+	}}, played)
+	if len(again) != 1 || !again[0].AWon {
+		t.Fatalf("again %+v", again)
+	}
+	tied := "16-16"
+	if len(socialDoublesFixtures(f.confirmed, []TournamentMatch{{
+		ID: "m2", Status: "COMPLETED", ScoreSummary: &tied,
+		ParticipantAID: &a, ParticipantA2ID: sp("p2"),
+		ParticipantBID: &b, ParticipantB2ID: sp("p4"),
+	}}, played)) != 0 {
+		t.Fatal("tie should not rate")
+	}
 }

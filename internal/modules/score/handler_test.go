@@ -17,12 +17,12 @@ import (
 // ── stub service ─────────────────────────────────────────────────────────────
 
 type stubService struct {
-	match      Match
-	live       LiveMatch
-	matches    []Match
-	total      int64
-	stats      UserStats
-	h2h        HeadToHead
+	match         Match
+	live          LiveMatch
+	matches       []Match
+	total         int64
+	stats         UserStats
+	h2h           HeadToHead
 	trend         []FitnessTrendPoint
 	wrapped       WrappedReport
 	wrappedErr    error
@@ -41,9 +41,9 @@ type stubService struct {
 	statsErr      error
 	h2hErr        error
 	trendErr      error
-	rematch    RematchChallenge
-	prefill    RematchPrefill
-	rematchErr error
+	rematch       RematchChallenge
+	prefill       RematchPrefill
+	rematchErr    error
 
 	gotLimit  int
 	gotOffset int
@@ -628,7 +628,7 @@ func TestCreateMatch_RoundTripsFitnessFields(t *testing.T) {
 		"sport": "TENNIS", "player_a_name": "Ada", "player_b_name": "Grace",
 		"sets_a": 2, "sets_b": 1, "winner_side": "A",
 		"avg_heart_rate": 141, "max_heart_rate": 178, "active_calories": 62,
-		"fitness_source": src,
+		"fitness_source":  src,
 		"fitness_samples": []map[string]any{{"t": 30, "hr": 141, "kcal": 10}},
 	})
 	w := httptest.NewRecorder()

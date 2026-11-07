@@ -27,28 +27,28 @@ type PointEvent struct {
 
 // MatchPointStats is derived for the match detail screen. It does not feed career W/L.
 type MatchPointStats struct {
-	DurationSeconds      int  `json:"duration_seconds"`
-	TotalPoints          int  `json:"total_points"`
-	PointsA              int  `json:"points_a"`
-	PointsB              int  `json:"points_b"`
-	HasServer            bool `json:"has_server"`
-	ServeWonA            int  `json:"serve_won_a"`
-	ServePlayedA         int  `json:"serve_played_a"`
-	ServeWonB            int  `json:"serve_won_b"`
-	ServePlayedB         int  `json:"serve_played_b"`
-	BreakWonA            int  `json:"break_won_a"`
-	BreakFacedA          int  `json:"break_faced_a"`
-	BreakWonB            int  `json:"break_won_b"`
-	BreakFacedB          int  `json:"break_faced_b"`
-	AcesA                int  `json:"aces_a"`
-	AcesB                int  `json:"aces_b"`
-	DoubleFaultsA        int  `json:"double_faults_a"`
-	DoubleFaultsB        int  `json:"double_faults_b"`
-	WinnersA             int  `json:"winners_a"`
-	WinnersB             int  `json:"winners_b"`
-	UnforcedErrorsA      int  `json:"unforced_errors_a"`
-	UnforcedErrorsB      int  `json:"unforced_errors_b"`
-	TaggedPoints         int  `json:"tagged_points"`
+	DurationSeconds int  `json:"duration_seconds"`
+	TotalPoints     int  `json:"total_points"`
+	PointsA         int  `json:"points_a"`
+	PointsB         int  `json:"points_b"`
+	HasServer       bool `json:"has_server"`
+	ServeWonA       int  `json:"serve_won_a"`
+	ServePlayedA    int  `json:"serve_played_a"`
+	ServeWonB       int  `json:"serve_won_b"`
+	ServePlayedB    int  `json:"serve_played_b"`
+	BreakWonA       int  `json:"break_won_a"`
+	BreakFacedA     int  `json:"break_faced_a"`
+	BreakWonB       int  `json:"break_won_b"`
+	BreakFacedB     int  `json:"break_faced_b"`
+	AcesA           int  `json:"aces_a"`
+	AcesB           int  `json:"aces_b"`
+	DoubleFaultsA   int  `json:"double_faults_a"`
+	DoubleFaultsB   int  `json:"double_faults_b"`
+	WinnersA        int  `json:"winners_a"`
+	WinnersB        int  `json:"winners_b"`
+	UnforcedErrorsA int  `json:"unforced_errors_a"`
+	UnforcedErrorsB int  `json:"unforced_errors_b"`
+	TaggedPoints    int  `json:"tagged_points"`
 }
 
 func sanitizeOutcome(p *PointEvent) {

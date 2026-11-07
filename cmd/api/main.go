@@ -78,6 +78,7 @@ func main() {
 
 	tournamentSvc := tournament.NewService(pool, hub)
 	tournamentSvc.SetGate(billingSvc)
+	tournamentSvc.SetDoublesRater(doublesNightSink{score: scoreSvc})
 
 	achSvc := achievements.NewService(pool, socialSvc, hub, notifySvc)
 	scoreSvc.SetAchievements(achSvc)
@@ -203,4 +204,24 @@ func (a seasonMatchSink) OnMatchFinished(ctx context.Context, m score.FinishedMa
 		PlayedAt:  m.PlayedAt,
 		PlayerIDs: []string{m.PlayerAUserID, m.PlayerA2UserID, m.PlayerBUserID, m.PlayerB2UserID},
 	})
+}
+
+// doublesNightSink adapts score.Service to tournament.DoublesRater.
+type doublesNightSink struct{ score *score.Service }
+
+func (a doublesNightSink) RateDoublesFixtures(ctx context.Context, sport string, fixtures []tournament.DoublesFixture) error {
+	if a.score == nil || len(fixtures) == 0 {
+		return nil
+	}
+	out := make([]score.DoublesFixture, len(fixtures))
+	for i, f := range fixtures {
+		out[i] = score.DoublesFixture{
+			TournamentMatchID: f.TournamentMatchID,
+			PlayedAt:          f.PlayedAt,
+			SideA:             f.SideA,
+			SideB:             f.SideB,
+			AWon:              f.AWon,
+		}
+	}
+	return a.score.RateDoublesFixtures(ctx, sport, out)
 }

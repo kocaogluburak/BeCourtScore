@@ -54,22 +54,22 @@ func (h *handler) createMatch(w http.ResponseWriter, r *http.Request) {
 	userID, _ := authkit.UserIDFromCtx(r.Context())
 
 	var body struct {
-		Sport           string       `json:"sport"`
-		PlayerAName     string       `json:"player_a_name"`
-		PlayerBName     string       `json:"player_b_name"`
-		PlayerAUserID   *string      `json:"player_a_user_id"`
-		PlayerBUserID   *string      `json:"player_b_user_id"`
-		PlayerA2Name    *string      `json:"player_a2_name"`
-		PlayerB2Name    *string      `json:"player_b2_name"`
-		PlayerA2UserID  *string      `json:"player_a2_user_id"`
-		PlayerB2UserID  *string      `json:"player_b2_user_id"`
-		SetsA           int          `json:"sets_a"`
-		SetsB           int          `json:"sets_b"`
-		SetScores       []SetScore   `json:"set_scores"`
-		WinnerSide      string       `json:"winner_side"`
-		SetRule         string       `json:"set_rule"`
-		FinalSet        string       `json:"final_set"`
-		PlayedAt        *time.Time   `json:"played_at"`
+		Sport           string          `json:"sport"`
+		PlayerAName     string          `json:"player_a_name"`
+		PlayerBName     string          `json:"player_b_name"`
+		PlayerAUserID   *string         `json:"player_a_user_id"`
+		PlayerBUserID   *string         `json:"player_b_user_id"`
+		PlayerA2Name    *string         `json:"player_a2_name"`
+		PlayerB2Name    *string         `json:"player_b2_name"`
+		PlayerA2UserID  *string         `json:"player_a2_user_id"`
+		PlayerB2UserID  *string         `json:"player_b2_user_id"`
+		SetsA           int             `json:"sets_a"`
+		SetsB           int             `json:"sets_b"`
+		SetScores       []SetScore      `json:"set_scores"`
+		WinnerSide      string          `json:"winner_side"`
+		SetRule         string          `json:"set_rule"`
+		FinalSet        string          `json:"final_set"`
+		PlayedAt        *time.Time      `json:"played_at"`
 		PointLog        []PointEvent    `json:"point_log"`
 		DurationSeconds *int            `json:"duration_seconds"`
 		AvgHeartRate    *int            `json:"avg_heart_rate"`

@@ -210,14 +210,14 @@ func (s *Service) AcceptRematch(ctx context.Context, userID, id string) (Rematch
 	}
 	s.publishRematch("rematch.accepted", updated.ChallengerID, challengerPrefill)
 	extras := map[string]string{
-		"type":               "rematch.accepted",
-		"rematch_id":         updated.ID,
-		"opponent_id":        updated.OpponentID,
-		"opponent_name":      displayName(updated.Opponent),
-		"sport":              updated.Sport,
-		"sets_to_win":        fmt.Sprintf("%d", updated.SetsToWin),
-		"advantage_enabled":  fmt.Sprintf("%t", updated.AdvantageEnabled),
-		"points_to_win":      fmt.Sprintf("%d", updated.PointsToWin),
+		"type":              "rematch.accepted",
+		"rematch_id":        updated.ID,
+		"opponent_id":       updated.OpponentID,
+		"opponent_name":     displayName(updated.Opponent),
+		"sport":             updated.Sport,
+		"sets_to_win":       fmt.Sprintf("%d", updated.SetsToWin),
+		"advantage_enabled": fmt.Sprintf("%t", updated.AdvantageEnabled),
+		"points_to_win":     fmt.Sprintf("%d", updated.PointsToWin),
 	}
 	if updated.SetRule != nil {
 		extras["set_rule"] = *updated.SetRule

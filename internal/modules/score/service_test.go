@@ -3,6 +3,7 @@ package score
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,10 @@ type fakeScoreStore struct {
 	openExists      bool
 	ratings         map[string]lockedRating
 	history         []ratingHistoryRow
+	seq             int
+	nights          SocialNightStats
+	socialH2H       SocialH2H
+	ratedDoubles    map[string]bool
 	rematches       []RematchChallenge
 	rematchConflict bool
 	summaries       map[string]UserSummary
@@ -65,8 +70,13 @@ func (f *fakeScoreStore) insert(_ context.Context, createdBy string, in CreateIn
 	if scores == nil {
 		scores = []SetScore{}
 	}
+	f.seq++
+	id := "hist-1"
+	if f.seq > 1 {
+		id = fmt.Sprintf("hist-%d", f.seq)
+	}
 	m := Match{
-		ID: "hist-1", Sport: in.Sport, PlayerAName: in.PlayerAName, PlayerBName: in.PlayerBName,
+		ID: id, Sport: in.Sport, PlayerAName: in.PlayerAName, PlayerBName: in.PlayerBName,
 		PlayerAUserID: in.PlayerAUserID, PlayerBUserID: in.PlayerBUserID,
 		PlayerA2Name: in.PlayerA2Name, PlayerB2Name: in.PlayerB2Name,
 		PlayerA2UserID: in.PlayerA2UserID, PlayerB2UserID: in.PlayerB2UserID,
@@ -180,16 +190,71 @@ func (f *fakeScoreStore) applySinglesElo(_ context.Context, sport, winnerID, los
 		playedAt = time.Now().UTC()
 	}
 	f.history = append(f.history,
-		ratingHistoryRow{UserID: firstID, Sport: sport, Rating: nextFirst, Counted: first.counted + 1, MatchID: matchID, PlayedAt: playedAt},
-		ratingHistoryRow{UserID: secondID, Sport: sport, Rating: nextSecond, Counted: second.counted + 1, MatchID: matchID, PlayedAt: playedAt},
+		ratingHistoryRow{UserID: firstID, Sport: sport, Rating: nextFirst, Counted: first.counted + 1, MatchID: matchID, PlayedAt: playedAt, Discipline: DisciplineSingles},
+		ratingHistoryRow{UserID: secondID, Sport: sport, Rating: nextSecond, Counted: second.counted + 1, MatchID: matchID, PlayedAt: playedAt, Discipline: DisciplineSingles},
 	)
 	return nil
+}
+
+func doublesRatingKey(userID, sport string) string {
+	return ratingKey(userID, sport) + "\x00" + DisciplineDoubles
+}
+
+func (f *fakeScoreStore) applyDoublesElo(_ context.Context, sport string, sideA, sideB [2]string, aWon bool, matchID, tournamentMatchID string, playedAt time.Time) error {
+	if f.ratedDoubles == nil {
+		f.ratedDoubles = map[string]bool{}
+	}
+	key := matchID
+	if tournamentMatchID != "" {
+		key = "t:" + tournamentMatchID
+	}
+	if key != "" && f.ratedDoubles[key] {
+		return nil
+	}
+	if key != "" {
+		f.ratedDoubles[key] = true
+	}
+	if f.ratings == nil {
+		f.ratings = map[string]lockedRating{}
+	}
+	var aRows, bRows [2]lockedRating
+	for i := 0; i < 2; i++ {
+		aRows[i] = f.ratings[doublesRatingKey(sideA[i], sport)]
+		if aRows[i].rating == 0 {
+			aRows[i].rating = initialRating
+		}
+		bRows[i] = f.ratings[doublesRatingKey(sideB[i], sport)]
+		if bRows[i].rating == 0 {
+			bRows[i].rating = initialRating
+		}
+	}
+	nextA, nextB := nextDoublesRatings(aRows, bRows, aWon)
+	if playedAt.IsZero() {
+		playedAt = time.Now().UTC()
+	}
+	for i := 0; i < 2; i++ {
+		f.ratings[doublesRatingKey(sideA[i], sport)] = lockedRating{rating: nextA[i], counted: aRows[i].counted + 1}
+		f.ratings[doublesRatingKey(sideB[i], sport)] = lockedRating{rating: nextB[i], counted: bRows[i].counted + 1}
+		f.history = append(f.history,
+			ratingHistoryRow{UserID: sideA[i], Sport: sport, Rating: nextA[i], Counted: aRows[i].counted + 1, MatchID: matchID, PlayedAt: playedAt, Discipline: DisciplineDoubles},
+			ratingHistoryRow{UserID: sideB[i], Sport: sport, Rating: nextB[i], Counted: bRows[i].counted + 1, MatchID: matchID, PlayedAt: playedAt, Discipline: DisciplineDoubles},
+		)
+	}
+	return nil
+}
+
+func (f *fakeScoreStore) listUserSocialNights(context.Context, string, string) (SocialNightStats, error) {
+	return f.nights, nil
+}
+
+func (f *fakeScoreStore) listSocialH2H(context.Context, string, string, string) (SocialH2H, error) {
+	return f.socialH2H, nil
 }
 
 func (f *fakeScoreStore) ratingPeakInRange(_ context.Context, userID string, from, to time.Time) (*WrappedElo, error) {
 	var rows []WrappedElo
 	for _, h := range f.history {
-		if h.UserID != userID {
+		if h.UserID != userID || !isSinglesDiscipline(h.Discipline) {
 			continue
 		}
 		if h.PlayedAt.Before(from) || !h.PlayedAt.Before(to) {
@@ -208,7 +273,12 @@ func (f *fakeScoreStore) listRatings(_ context.Context, userID string) ([]UserRa
 		if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
 			continue
 		}
-		out = append(out, UserRating{Sport: key[len(prefix):], Rating: row.rating, MatchesCounted: row.counted})
+		rest := key[len(prefix):]
+		sport, discipline, found := strings.Cut(rest, "\x00")
+		if !found {
+			discipline = DisciplineSingles
+		}
+		out = append(out, UserRating{Sport: sport, Discipline: discipline, Rating: row.rating, MatchesCounted: row.counted})
 	}
 	return out, nil
 }
@@ -964,8 +1034,8 @@ type fakeGate struct {
 	isPro bool
 }
 
-func (g *fakeGate) AllowCloudSync(context.Context, string) error  { return g.err }
-func (g *fakeGate) AllowStats(context.Context, string) error      { return g.err }
+func (g *fakeGate) AllowCloudSync(context.Context, string) error { return g.err }
+func (g *fakeGate) AllowStats(context.Context, string) error     { return g.err }
 func (g *fakeGate) AllowAdvancedStats(context.Context, string) error {
 	if g.isPro {
 		return nil
@@ -1125,6 +1195,49 @@ func TestCreateMatch_GuestAndDoublesSkipRating(t *testing.T) {
 	}
 }
 
+func TestCreateMatch_RatesRegisteredDoublesWithoutSingles(t *testing.T) {
+	a, b, c, d := "ua", "ub", "uc", "ud"
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{}, nil)
+	if _, err := svc.CreateMatch(context.Background(), a, CreateInput{
+		Sport: "PADEL", PlayerAName: "A", PlayerBName: "C",
+		PlayerAUserID: &a, PlayerBUserID: &c,
+		PlayerA2Name: spName("B"), PlayerB2Name: spName("D"),
+		PlayerA2UserID: &b, PlayerB2UserID: &d,
+		SetsA: 2, SetsB: 1, WinnerSide: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if store.ratings[ratingKey(a, "PADEL")].rating != 0 {
+		t.Fatal("doubles moved singles rating")
+	}
+	if store.ratings[doublesRatingKey(a, "PADEL")].rating != 1516 || store.ratings[doublesRatingKey(c, "PADEL")].rating != 1484 {
+		t.Fatalf("doubles=%v", store.ratings)
+	}
+	if err := svc.RateDoublesFixtures(context.Background(), "PADEL", []DoublesFixture{{
+		TournamentMatchID: "tm1",
+		SideA:             [2]string{a, b},
+		SideB:             [2]string{c, d},
+		AWon:              false,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	after := store.ratings[doublesRatingKey(a, "PADEL")].rating
+	if err := svc.RateDoublesFixtures(context.Background(), "PADEL", []DoublesFixture{{
+		TournamentMatchID: "tm1",
+		SideA:             [2]string{a, b},
+		SideB:             [2]string{c, d},
+		AWon:              true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if store.ratings[doublesRatingKey(a, "PADEL")].rating != after {
+		t.Fatal("replayed social round moved rating again")
+	}
+}
+
+func spName(s string) *string { return &s }
+
 func TestEndLiveMatch_RatesArchivedSingles(t *testing.T) {
 	a, b := "ua", "ub"
 	store := &fakeScoreStore{live: LiveMatch{
@@ -1171,6 +1284,57 @@ func TestGetUserStats_IncludesSportRating(t *testing.T) {
 		if s.Sport == "TENNIS" && s.Rating != 1516 {
 			t.Fatalf("tennis by_sport=%+v", s)
 		}
+		if s.Sport == "TENNIS" && s.DoublesRating != initialRating {
+			t.Fatalf("doubles default=%d", s.DoublesRating)
+		}
+	}
+	if got.DoublesRating != initialRating {
+		t.Fatalf("doubles=%d", got.DoublesRating)
+	}
+}
+
+func TestGetUserStats_GuestStaysAndSocialNightsAttach(t *testing.T) {
+	me := "u1"
+	store := &fakeScoreStore{
+		matches: []Match{{
+			Sport: "PADEL", PlayerAUserID: &me, PlayerAName: "Me", PlayerBName: "Guest",
+			SetsA: 2, SetsB: 0, WinnerSide: "A", PlayedAt: time.Now(),
+		}},
+		nights: SocialNightStats{Nights: 2, BestRank: 1},
+	}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	got, err := svc.GetUserStats(context.Background(), me, me, "PADEL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Matches != 1 || got.Wins != 1 || len(got.Rivals) != 0 {
+		t.Fatalf("guest career=%+v", got)
+	}
+	if got.SocialNights != 2 || got.SocialBestRank != 1 {
+		t.Fatalf("nights=%d best=%d", got.SocialNights, got.SocialBestRank)
+	}
+}
+
+func TestGetHeadToHead_SocialRoundsStayOffSets(t *testing.T) {
+	me, opp := "u1", "u2"
+	store := &fakeScoreStore{
+		matches: []Match{{
+			Sport: "PADEL", PlayerAUserID: &me, PlayerBUserID: &opp,
+			PlayerAName: "Me", PlayerBName: "Opp", SetsA: 2, SetsB: 1, WinnerSide: "A",
+			PlayedAt: time.Now(),
+		}},
+		socialH2H: SocialH2H{Rounds: 4, Wins: 3, Losses: 1},
+	}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	got, err := svc.GetHeadToHead(context.Background(), me, opp, "PADEL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Matches != 1 || got.SetDiff != 1 {
+		t.Fatalf("sets moved: %+v", got)
+	}
+	if got.SocialRounds != 4 || got.SocialWins != 3 || got.SocialLosses != 1 {
+		t.Fatalf("social=%d %d %d", got.SocialRounds, got.SocialWins, got.SocialLosses)
 	}
 }
 
@@ -1201,7 +1365,7 @@ func TestCreateMatch_PersistsAndClampsFitness(t *testing.T) {
 	_, err = svc.CreateMatch(context.Background(), "u1", CreateInput{
 		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
 		AvgHeartRate: intPtr(-1), MaxHeartRate: intPtr(400), ActiveCalories: intPtr(-8),
-		FitnessSource: strPtr("fitbit"),
+		FitnessSource:  strPtr("fitbit"),
 		FitnessSamples: append(samples, make([]FitnessSample, maxFitnessSamples)...),
 	})
 	if err != nil {
@@ -1220,7 +1384,7 @@ func TestListMyMatches_StripsFitnessSamplesUnlessPro(t *testing.T) {
 	match := Match{
 		ID: "m1", CreatedBy: "u1",
 		AvgHeartRate: intPtr(140), ActiveCalories: intPtr(50),
-		FitnessSource: &src,
+		FitnessSource:  &src,
 		FitnessSamples: []FitnessSample{{T: 10, HR: intPtr(138)}},
 	}
 	store := &fakeScoreStore{matches: []Match{match}}
@@ -1248,7 +1412,7 @@ func TestGetMatch_StripsFitnessSamplesUnlessPro(t *testing.T) {
 	store := &fakeScoreStore{match: Match{
 		ID: "m1", CreatedBy: "u1",
 		AvgHeartRate: intPtr(140), MaxHeartRate: intPtr(180), ActiveCalories: intPtr(70),
-		FitnessSource: &src,
+		FitnessSource:  &src,
 		FitnessSamples: []FitnessSample{{T: 10, HR: intPtr(138)}},
 	}}
 	svc := newScoreService(store, &fakeFriends{ok: true}, nil)

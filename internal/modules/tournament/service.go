@@ -24,6 +24,21 @@ var validFormats = map[string]bool{
 	"AMERICANO": true, "MEXICANO": true, "KING_OF_THE_COURT": true,
 }
 
+// DoublesRater applies doubles Elo for a finished social night.
+// Implemented by score.Service through an adapter in cmd/api. Nil-safe.
+type DoublesRater interface {
+	RateDoublesFixtures(ctx context.Context, sport string, fixtures []DoublesFixture) error
+}
+
+// DoublesFixture is one completed social 2v2 between four registered users.
+type DoublesFixture struct {
+	TournamentMatchID string
+	PlayedAt          time.Time
+	SideA             [2]string
+	SideB             [2]string
+	AWon              bool
+}
+
 // store is the persistence surface the Service depends on. Implemented by *repo;
 // stubbed in tests so business rules can be verified without a database.
 type store interface {
@@ -60,9 +75,10 @@ type store interface {
 
 // Service is the tournament domain's business logic layer.
 type Service struct {
-	store store
-	hub   *sse.Hub
-	gate  entitlement.Gate
+	store   store
+	hub     *sse.Hub
+	gate    entitlement.Gate
+	doubles DoublesRater
 }
 
 // NewService wires the Service to Postgres and the SSE hub.
@@ -71,6 +87,8 @@ func NewService(pool *pgxpool.Pool, hub *sse.Hub) *Service {
 }
 
 func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }
+
+func (s *Service) SetDoublesRater(r DoublesRater) { s.doubles = r }
 
 // ── View types ───────────────────────────────────────────────────────────────
 

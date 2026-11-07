@@ -204,3 +204,7 @@ func (r *repo) listWeekMatches(ctx context.Context, groupID, sport string, start
 	}
 	return out, rows.Err()
 }
+
+func (r *repo) listWeekSocialNights(ctx context.Context, groupID string, start, end time.Time) ([]socialNight, error) {
+	return r.listSeasonSocialNights(ctx, groupID, start, end)
+}
