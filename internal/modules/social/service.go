@@ -30,6 +30,7 @@ type Service struct {
 	repo    store
 	groups  groupStore
 	seasons seasonStore
+	pulse   pulseStore
 	hub     *sse.Hub
 	gate    entitlement.Gate
 	now     func() time.Time
@@ -39,7 +40,7 @@ type Service struct {
 // NewService creates a Service wired to the given Postgres pool.
 func NewService(pool *pgxpool.Pool) *Service {
 	r := &repo{pool: pool}
-	return &Service{repo: r, groups: r, seasons: r}
+	return &Service{repo: r, groups: r, seasons: r, pulse: r}
 }
 
 func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }

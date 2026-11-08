@@ -88,6 +88,9 @@ func (f *fakeStore) updateUser(_ context.Context, id string, in UpdateInput) (Us
 	if in.Nickname != nil {
 		u.Nickname = in.Nickname
 	}
+	if in.TimeZone != nil {
+		u.TimeZone = in.TimeZone
+	}
 	f.byID[id] = u
 	for k, v := range f.byIdentity {
 		if v.ID == id {
@@ -314,5 +317,44 @@ func TestDeleteUser_NotFound(t *testing.T) {
 	err := svc.DeleteUser(context.Background(), "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestUpdateUser_TimeZoneKeepsOtherFields(t *testing.T) {
+	store := newFakeStore()
+	svc := testService(store)
+	_, user, _, err := svc.AuthWithProvider(context.Background(), "google", "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nick := "ace"
+	if _, err := svc.UpdateUser(context.Background(), user.ID, UpdateInput{Nickname: &nick}); err != nil {
+		t.Fatal(err)
+	}
+	zone := "Europe/Istanbul"
+	got, err := svc.UpdateUser(context.Background(), user.ID, UpdateInput{TimeZone: &zone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TimeZone == nil || *got.TimeZone != "Europe/Istanbul" {
+		t.Fatalf("zone=%v", got.TimeZone)
+	}
+	if got.Nickname == nil || *got.Nickname != "ace" {
+		t.Fatalf("nickname changed: %v", got.Nickname)
+	}
+	if got.Name == nil || *got.Name != "Ada" {
+		t.Fatalf("name changed: %v", got.Name)
+	}
+
+	for _, bad := range []string{"", "Local", "+03:00", "Not/AZone", "  "} {
+		z := bad
+		_, err := svc.UpdateUser(context.Background(), user.ID, UpdateInput{TimeZone: &z})
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("zone %q err=%v", bad, err)
+		}
+	}
+	still, err := svc.GetUser(context.Background(), user.ID)
+	if err != nil || still.TimeZone == nil || *still.TimeZone != "Europe/Istanbul" || still.Nickname == nil || *still.Nickname != "ace" {
+		t.Fatalf("rejected zone mutated profile: %+v err=%v", still, err)
 	}
 }

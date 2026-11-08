@@ -166,6 +166,16 @@ func (s *FCMSender) SendLocalized(ctx context.Context, tokens []PlatformToken, m
 }
 
 func (s *FCMSender) sendLocalizedOne(ctx context.Context, accessToken string, device PlatformToken, msg LocalizedPush) error {
+	message, ok := localizedMessage(device, msg)
+	if !ok {
+		return nil
+	}
+	return s.post(ctx, accessToken, map[string]any{"message": message})
+}
+
+// localizedMessage builds one FCM message. Web is data-only: no notification
+// title or body. Unknown platforms are skipped.
+func localizedMessage(device PlatformToken, msg LocalizedPush) (map[string]any, bool) {
 	data := map[string]string{}
 	for k, v := range msg.Data {
 		data[k] = v
@@ -195,10 +205,12 @@ func (s *FCMSender) sendLocalizedOne(ctx context.Context, accessToken string, de
 		}
 	case "android":
 		message["android"] = map[string]any{"priority": "high"}
+	case "web":
+		// data-only; the service worker resolves the loc keys
 	default:
-		return nil
+		return nil, false
 	}
-	return s.post(ctx, accessToken, map[string]any{"message": message})
+	return message, true
 }
 
 func (s *FCMSender) post(ctx context.Context, accessToken string, payload map[string]any) error {

@@ -6,7 +6,7 @@ import (
 )
 
 func TestISOWeek_MondayUTC(t *testing.T) {
-	// Sunday 26 Oct 2026 23:00 UTC is still ISO week starting Mon 26? 
+	// Sunday 26 Oct 2026 23:00 UTC is still ISO week starting Mon 26?
 	// 25 Oct 2026 is Sunday → week of Mon 19 Oct.
 	sun := time.Date(2026, 10, 25, 23, 0, 0, 0, time.UTC)
 	start, end := ISOWeek(sun)

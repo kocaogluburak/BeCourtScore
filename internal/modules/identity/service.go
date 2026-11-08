@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"courtscore/internal/platform/authkit"
@@ -143,8 +144,29 @@ func (s *Service) GetUser(ctx context.Context, userID string) (User, error) {
 }
 
 // UpdateUser applies optional profile fields and returns the updated user.
+// A present time_zone must be an IANA name. Omitting the field leaves the column.
 func (s *Service) UpdateUser(ctx context.Context, userID string, in UpdateInput) (User, error) {
+	if in.TimeZone != nil {
+		tz, err := ValidateTimeZone(*in.TimeZone)
+		if err != nil {
+			return User{}, err
+		}
+		in.TimeZone = &tz
+	}
 	return s.repo.updateUser(ctx, userID, in)
+}
+
+// ValidateTimeZone accepts an IANA name (Europe/Istanbul, America/Los_Angeles, UTC).
+// Empty, Local, and numeric offsets are rejected.
+func ValidateTimeZone(raw string) (string, error) {
+	tz := strings.TrimSpace(raw)
+	if tz == "" || tz == "Local" || strings.HasPrefix(tz, "+") || strings.HasPrefix(tz, "-") {
+		return "", fmt.Errorf("%w: invalid time_zone", ErrInvalid)
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return "", fmt.Errorf("%w: invalid time_zone", ErrInvalid)
+	}
+	return tz, nil
 }
 
 // DeleteUser permanently deletes the account and cascaded related data.

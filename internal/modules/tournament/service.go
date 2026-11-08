@@ -24,6 +24,12 @@ var validFormats = map[string]bool{
 	"AMERICANO": true, "MEXICANO": true, "KING_OF_THE_COURT": true,
 }
 
+// SocialPulseHook refreshes open weekly cards when a social night finishes.
+// Wired in cmd/api. Nil-safe; it must not fail the result write.
+type SocialPulseHook interface {
+	OnSocialNight(ctx context.Context, playerIDs []string, groupID string)
+}
+
 // DoublesRater applies doubles Elo for a finished social night.
 // Implemented by score.Service through an adapter in cmd/api. Nil-safe.
 type DoublesRater interface {
@@ -79,6 +85,7 @@ type Service struct {
 	hub     *sse.Hub
 	gate    entitlement.Gate
 	doubles DoublesRater
+	pulse   SocialPulseHook
 }
 
 // NewService wires the Service to Postgres and the SSE hub.
@@ -89,6 +96,8 @@ func NewService(pool *pgxpool.Pool, hub *sse.Hub) *Service {
 func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }
 
 func (s *Service) SetDoublesRater(r DoublesRater) { s.doubles = r }
+
+func (s *Service) SetSocialPulse(h SocialPulseHook) { s.pulse = h }
 
 // ── View types ───────────────────────────────────────────────────────────────
 

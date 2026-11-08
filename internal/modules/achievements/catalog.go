@@ -2,10 +2,10 @@ package achievements
 
 // Badge category / tier values are stable API contract strings.
 const (
-	CategoryMilestone    = "milestone"
-	CategoryPerformance  = "performance"
-	CategoryTournament   = "tournament"
-	CategoryConsistency  = "consistency"
+	CategoryMilestone   = "milestone"
+	CategoryPerformance = "performance"
+	CategoryTournament  = "tournament"
+	CategoryConsistency = "consistency"
 
 	TierBronze = "bronze"
 	TierSilver = "silver"
@@ -14,18 +14,18 @@ const (
 
 // Badge codes are the API contract. Names/descriptions live in client i18n.
 const (
-	BadgeFirstMatch      = "first_match"
-	BadgeFirstWin        = "first_win"
-	BadgeMatches10       = "matches_10"
-	BadgeMatches50       = "matches_50"
-	BadgeMatches100      = "matches_100"
-	BadgeWinStreak5      = "win_streak_5"
-	BadgeElo1600         = "elo_1600"
-	BadgeTournamentWin1  = "tournament_win_1"
-	BadgeTiebreakMaster  = "tiebreak_master"
-	BadgeWeeksStreak4    = "weeks_streak_4"
-	BadgeWeeksStreak12   = "weeks_streak_12"
-	BadgeGoalCrusher     = "goal_crusher"
+	BadgeFirstMatch     = "first_match"
+	BadgeFirstWin       = "first_win"
+	BadgeMatches10      = "matches_10"
+	BadgeMatches50      = "matches_50"
+	BadgeMatches100     = "matches_100"
+	BadgeWinStreak5     = "win_streak_5"
+	BadgeElo1600        = "elo_1600"
+	BadgeTournamentWin1 = "tournament_win_1"
+	BadgeTiebreakMaster = "tiebreak_master"
+	BadgeWeeksStreak4   = "weeks_streak_4"
+	BadgeWeeksStreak12  = "weeks_streak_12"
+	BadgeGoalCrusher    = "goal_crusher"
 )
 
 // CatalogEntry is one code-defined badge (no localized text).

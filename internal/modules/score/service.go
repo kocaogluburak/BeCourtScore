@@ -39,6 +39,12 @@ type AchievementHook interface {
 	OnMatchFinished(ctx context.Context, participantUserIDs []string, sport string)
 }
 
+// PulseHook refreshes open weekly cards after a finished match is written or deleted.
+// Implemented by achievements.Service through an adapter in cmd/api. Nil-safe.
+type PulseHook interface {
+	OnMatchPulse(ctx context.Context, participantUserIDs []string)
+}
+
 // ActivitySink is called after a finished match is persisted (or deleted).
 // Implemented by social.FeedService (via a thin adapter in main.go). Nil-safe.
 type ActivitySink interface {
@@ -117,6 +123,7 @@ type Service struct {
 	hub             *sse.Hub
 	push            PushSender
 	ach             AchievementHook
+	pulse           PulseHook
 	activity        ActivitySink
 	seasons         SeasonNotifier
 	accrue          UsageAccruer
@@ -132,6 +139,8 @@ func NewService(pool *pgxpool.Pool, friends FriendChecker, hub *sse.Hub, push Pu
 func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }
 
 func (s *Service) SetAchievements(h AchievementHook) { s.ach = h }
+
+func (s *Service) SetPulseHook(h PulseHook) { s.pulse = h }
 
 func (s *Service) SetActivitySink(a ActivitySink) { s.activity = a }
 
@@ -195,6 +204,7 @@ func (s *Service) CreateMatch(ctx context.Context, userID string, in CreateInput
 		return Match{}, err
 	}
 	s.notifyAchievements(ctx, m)
+	s.notifyPulse(ctx, m)
 	s.notifyActivity(ctx, m)
 	s.notifySeason(ctx, m)
 	s.notifyAccrual(ctx, userID, m.DurationSeconds)
@@ -327,11 +337,17 @@ func (s *Service) stripFitnessSamplesOnList(ctx context.Context, viewerID string
 }
 
 // DeleteMatch removes a match; only its creator may delete it.
+// Participants are read first so the open card can drop the deleted match.
 func (s *Service) DeleteMatch(ctx context.Context, userID, matchID string) error {
+	m, err := s.repo.getByID(ctx, matchID)
+	if err != nil {
+		return err
+	}
 	if err := s.repo.deleteByID(ctx, matchID, userID); err != nil {
 		return err
 	}
 	s.notifyActivityDeleted(ctx, matchID)
+	s.notifyPulse(ctx, m)
 	return nil
 }
 
@@ -699,6 +715,7 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 		return LiveMatch{}, err
 	}
 	s.notifyAchievements(ctx, hist)
+	s.notifyPulse(ctx, hist)
 	s.notifyActivity(ctx, hist)
 	s.notifySeason(ctx, hist)
 	s.notifyAccrual(ctx, userID, hist.DurationSeconds)
@@ -984,6 +1001,20 @@ func (s *Service) notifyAchievements(ctx context.Context, m Match) {
 		}
 	}()
 	s.ach.OnMatchFinished(ctx, ids, m.Sport)
+}
+
+// notifyPulse is best-effort: a hook failure must never fail the match write.
+func (s *Service) notifyPulse(ctx context.Context, m Match) {
+	if s.pulse == nil {
+		return
+	}
+	ids := inviteeIDs("", m.PlayerAUserID, m.PlayerA2UserID, m.PlayerBUserID, m.PlayerB2UserID)
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("score: pulse hook panic", "err", rec)
+		}
+	}()
+	s.pulse.OnMatchPulse(ctx, ids)
 }
 
 // notifyActivity is best-effort: hook failures must never fail the match POST.

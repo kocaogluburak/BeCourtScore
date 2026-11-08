@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"courtscore/internal/platform/authkit"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type stubAchService struct {
@@ -17,6 +19,7 @@ type stubAchService struct {
 	badges  []UserBadge
 	total   int64
 	goal    GoalState
+	pulse   PulseCard
 	err     error
 }
 
@@ -25,6 +28,9 @@ func (s *stubAchService) ListUserBadges(context.Context, string, string, int, in
 	return s.badges, s.total, s.err
 }
 func (s *stubAchService) GetGoal(context.Context, string) (GoalState, error) { return s.goal, s.err }
+func (s *stubAchService) GetPulse(context.Context, string) (PulseCard, error) {
+	return s.pulse, s.err
+}
 func (s *stubAchService) SetGoal(_ context.Context, _ string, weeklyTarget int, reminderOptIn bool) (GoalState, error) {
 	if s.err != nil {
 		return GoalState{}, s.err
@@ -119,5 +125,29 @@ func TestGetGoal_OK(t *testing.T) {
 	h.getGoal(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d", w.Code)
+	}
+}
+
+func TestGetPulse_UnauthorizedAndOpenToFreeUsers(t *testing.T) {
+	secret := []byte("pulse-test-secret")
+	r := chi.NewRouter()
+	Mount(r, &stubAchService{pulse: PulseCard{DaysLeft: 6}}, authkit.Middleware(secret))
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/me/pulse", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token status=%d", w.Code)
+	}
+
+	tok, err := authkit.IssueAccessToken("u1", secret, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/me/pulse", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("authed status=%d body=%s", w.Code, w.Body.String())
 	}
 }

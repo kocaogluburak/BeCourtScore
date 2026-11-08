@@ -19,6 +19,7 @@ import (
 
 type stubService struct {
 	user       User
+	lastUpdate UpdateInput
 	getUserErr error
 	updateErr  error
 	deleteErr  error
@@ -48,6 +49,7 @@ func (s *stubService) GetUser(_ context.Context, _ string) (User, error) {
 }
 
 func (s *stubService) UpdateUser(_ context.Context, _ string, in UpdateInput) (User, error) {
+	s.lastUpdate = in
 	if s.updateErr != nil {
 		return User{}, s.updateErr
 	}
@@ -63,6 +65,9 @@ func (s *stubService) UpdateUser(_ context.Context, _ string, in UpdateInput) (U
 	}
 	if in.ProfileIcon != nil {
 		u.ProfileIcon = in.ProfileIcon
+	}
+	if in.TimeZone != nil {
+		u.TimeZone = in.TimeZone
 	}
 	return u, nil
 }
@@ -549,6 +554,47 @@ func TestGetMe_Returns401WithInvalidToken(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status: got %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestPatchMe_InvalidTimeZone400AndOmittedFieldLeavesIt(t *testing.T) {
+	zone := "Europe/Istanbul"
+	user := baseUser()
+	user.TimeZone = &zone
+	svc := &stubService{user: user}
+	h := &handler{svc: svc, hub: sse.NewHub()}
+
+	body, _ := json.Marshal(map[string]string{"nickname": "ace"})
+	w := httptest.NewRecorder()
+	h.patchMe(w, authedRequest(http.MethodPatch, "/v1/me", body, "user-abc"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	if svc.lastUpdate.TimeZone != nil {
+		t.Fatal("omitted time_zone must not be sent")
+	}
+	if !strings.Contains(w.Body.String(), `"time_zone":"Europe/Istanbul"`) {
+		t.Fatalf("body=%s", w.Body.String())
+	}
+	if svc.lastUpdate.Nickname == nil || *svc.lastUpdate.Nickname != "ace" {
+		t.Fatalf("nickname=%v", svc.lastUpdate.Nickname)
+	}
+
+	body, _ = json.Marshal(map[string]string{"time_zone": "Local"})
+	svc.updateErr = ErrInvalid
+	w = httptest.NewRecorder()
+	h.patchMe(w, authedRequest(http.MethodPatch, "/v1/me", body, "user-abc"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetMe_TimeZoneNullWhenUnset(t *testing.T) {
+	h := &handler{svc: &stubService{user: baseUser()}, hub: sse.NewHub()}
+	w := httptest.NewRecorder()
+	h.getMe(w, authedRequest(http.MethodGet, "/v1/me", nil, "user-abc"))
+	if !strings.Contains(w.Body.String(), `"time_zone":null`) {
+		t.Fatalf("body=%s", w.Body.String())
 	}
 }
 

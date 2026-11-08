@@ -43,6 +43,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		slog.Warn("achievements: initial streak reconcile", "err", err)
 	}
 	s.maybeRemind(ctx)
+	s.maybePulse(ctx)
 
 	ticker := time.NewTicker(s.tick)
 	defer ticker.Stop()
@@ -62,6 +63,7 @@ func (s *Scheduler) Tick(ctx context.Context) {
 		slog.Warn("achievements: streak reconcile", "err", err)
 	}
 	s.maybeRemind(ctx)
+	s.maybePulse(ctx)
 }
 
 func (s *Scheduler) maybeRemind(ctx context.Context) {
@@ -70,6 +72,12 @@ func (s *Scheduler) maybeRemind(ctx context.Context) {
 	}
 	if err := s.svc.SendWeeklyReminders(ctx); err != nil {
 		slog.Warn("achievements: weekly reminders", "err", err)
+	}
+}
+
+func (s *Scheduler) maybePulse(ctx context.Context) {
+	if err := s.svc.SendWeeklyPulses(ctx); err != nil {
+		slog.Warn("achievements: weekly pulse", "err", err)
 	}
 }
 

@@ -15,5 +15,6 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 		r.Get("/v1/users/{userID}/badges", h.listUserBadges)
 		r.Get("/v1/me/goal", h.getGoal)
 		r.Put("/v1/me/goal", h.putGoal)
+		r.Get("/v1/me/pulse", h.getPulse)
 	})
 }

@@ -73,3 +73,40 @@ type ReminderCandidate struct {
 	ReminderOptIn bool
 	Current       int
 }
+
+// PulseCandidate is a user with a stored IANA time zone.
+type PulseCandidate struct {
+	UserID   string
+	TimeZone string
+}
+
+// PulseGoal is the weekly match count. Nil on the card when the target is 0.
+type PulseGoal struct {
+	Current int  `json:"current"`
+	Target  int  `json:"target"`
+	Reached bool `json:"reached"`
+}
+
+// PulseRank is the one ladder row. Nil when the player scored no points.
+type PulseRank struct {
+	GroupID   string `json:"group_id"`
+	GroupName string `json:"group_name"`
+	Rank      int    `json:"rank"`
+	Points    int    `json:"points"`
+}
+
+// PulseFriends lists names of friends who finished a match this week.
+type PulseFriends struct {
+	Names  []string `json:"names"`
+	Others int      `json:"others"`
+}
+
+// PulseCard is GET /v1/me/pulse. Empty parts are null. days_left is always 0..6.
+type PulseCard struct {
+	WeekStart time.Time     `json:"week_start"`
+	WeekEnd   time.Time     `json:"week_end"`
+	DaysLeft  int           `json:"days_left"`
+	Goal      *PulseGoal    `json:"goal"`
+	Rank      *PulseRank    `json:"rank"`
+	Friends   *PulseFriends `json:"friends"`
+}

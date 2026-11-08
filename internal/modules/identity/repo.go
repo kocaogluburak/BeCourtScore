@@ -21,6 +21,7 @@ type User struct {
 	Name          *string               `json:"name"`
 	Surname       *string               `json:"surname"`
 	ProfileIcon   *string               `json:"profile_icon"`
+	TimeZone      *string               `json:"time_zone"`
 	CreatedAt     time.Time             `json:"created_at"`
 	UpdatedAt     time.Time             `json:"updated_at"`
 	Entitlement   *entitlement.Snapshot `json:"entitlement,omitempty"`
@@ -32,6 +33,16 @@ type UpdateInput struct {
 	Name        *string
 	Surname     *string
 	ProfileIcon *string
+	// TimeZone is nil when the client omitted the field. A non-nil value is
+	// a validated IANA name and replaces the column.
+	TimeZone *string
+}
+
+func scanUser(row pgx.Row) (User, error) {
+	var u User
+	err := row.Scan(&u.ID, &u.Email, &u.EmailVerified, &u.Nickname, &u.Name, &u.Surname,
+		&u.ProfileIcon, &u.TimeZone, &u.CreatedAt, &u.UpdatedAt)
+	return u, err
 }
 
 type repo struct{ pool *pgxpool.Pool }
@@ -41,15 +52,12 @@ type repo struct{ pool *pgxpool.Pool }
 func (r *repo) findUserByIdentity(ctx context.Context, provider, subject string) (User, bool, error) {
 	const q = `
 		SELECT u.id, u.email, u.email_verified, u.nickname, u.name, u.surname,
-		       u.profile_icon, u.created_at, u.updated_at
+		       u.profile_icon, u.time_zone, u.created_at, u.updated_at
 		FROM auth_identities ai
 		JOIN users u ON u.id = ai.user_id
 		WHERE ai.provider = $1 AND ai.provider_subject = $2`
 
-	var u User
-	err := r.pool.QueryRow(ctx, q, provider, subject).
-		Scan(&u.ID, &u.Email, &u.EmailVerified, &u.Nickname, &u.Name, &u.Surname,
-			&u.ProfileIcon, &u.CreatedAt, &u.UpdatedAt)
+	u, err := scanUser(r.pool.QueryRow(ctx, q, provider, subject))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, false, nil
 	}
@@ -89,11 +97,9 @@ func (r *repo) createUserWithIdentity(ctx context.Context, ext ExternalIdentity)
 		INSERT INTO users (email, email_verified, profile_icon, name, surname)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, email, email_verified, nickname, name, surname,
-		          profile_icon, created_at, updated_at`
+		          profile_icon, time_zone, created_at, updated_at`
 
-	err = tx.QueryRow(ctx, insertUser, emailArg, ext.EmailVerified, iconArg, nameArg, surnameArg).
-		Scan(&u.ID, &u.Email, &u.EmailVerified, &u.Nickname, &u.Name, &u.Surname,
-			&u.ProfileIcon, &u.CreatedAt, &u.UpdatedAt)
+	u, err = scanUser(tx.QueryRow(ctx, insertUser, emailArg, ext.EmailVerified, iconArg, nameArg, surnameArg))
 	if err != nil {
 		return User{}, fmt.Errorf("insert user: %w", err)
 	}
@@ -112,13 +118,10 @@ func (r *repo) createUserWithIdentity(ctx context.Context, ext ExternalIdentity)
 func (r *repo) getUserByID(ctx context.Context, id string) (User, error) {
 	const q = `
 		SELECT id, email, email_verified, nickname, name, surname,
-		       profile_icon, created_at, updated_at
+		       profile_icon, time_zone, created_at, updated_at
 		FROM users WHERE id = $1`
 
-	var u User
-	err := r.pool.QueryRow(ctx, q, id).
-		Scan(&u.ID, &u.Email, &u.EmailVerified, &u.Nickname, &u.Name, &u.Surname,
-			&u.ProfileIcon, &u.CreatedAt, &u.UpdatedAt)
+	u, err := scanUser(r.pool.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -149,15 +152,13 @@ func (r *repo) updateUser(ctx context.Context, id string, in UpdateInput) (User,
 			name         = COALESCE($3, name),
 			surname      = COALESCE($4, surname),
 			profile_icon = COALESCE($5, profile_icon),
+			time_zone    = CASE WHEN $6 THEN $7 ELSE time_zone END,
 			updated_at   = NOW()
 		WHERE id = $1
 		RETURNING id, email, email_verified, nickname, name, surname,
-		          profile_icon, created_at, updated_at`
+		          profile_icon, time_zone, created_at, updated_at`
 
-	var u User
-	err := r.pool.QueryRow(ctx, q, id, in.Nickname, in.Name, in.Surname, in.ProfileIcon).
-		Scan(&u.ID, &u.Email, &u.EmailVerified, &u.Nickname, &u.Name, &u.Surname,
-			&u.ProfileIcon, &u.CreatedAt, &u.UpdatedAt)
+	u, err := scanUser(r.pool.QueryRow(ctx, q, id, in.Nickname, in.Name, in.Surname, in.ProfileIcon, in.TimeZone != nil, in.TimeZone))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -221,5 +222,6 @@ func isUniqueViolation(err error) bool {
 var (
 	ErrNotFound     = errors.New("not found")
 	ErrConflict     = errors.New("conflict")
+	ErrInvalid      = errors.New("invalid input")
 	ErrInvalidToken = errors.New("invalid or expired refresh token")
 )

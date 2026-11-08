@@ -32,19 +32,43 @@ type TournamentReader interface {
 }
 
 // LocalizedPusher is notify.Service.SendLocalizedToUser (i18n-clean reminder).
+// Web tokens stay on this path so the goal reminder keeps skipping them.
 type LocalizedPusher interface {
 	SendLocalizedToUser(ctx context.Context, userID, typ, titleLocKey, bodyLocKey string, locArgs []string, data map[string]string) error
 }
 
+// AllPlatformPusher is notify.Service.SendLocalizedToAllPlatforms.
+// The weekly pulse uses it; the goal reminder does not.
+type AllPlatformPusher interface {
+	SendLocalizedToAllPlatforms(ctx context.Context, userID, typ, titleLocKey, bodyLocKey string, locArgs []string, data map[string]string) error
+}
+
+// PulseAudience expands a match or social night into the users whose open card
+// should reload. Implemented by social.Service through an adapter in cmd/api.
+type PulseAudience interface {
+	MatchAudience(ctx context.Context, participantIDs []string) ([]string, error)
+	NightAudience(ctx context.Context, playerIDs []string, groupID string) ([]string, error)
+}
+
+// PulseBoard reads the ladder row and the friend line. Implemented by social.Service
+// through an adapter in cmd/api. achievements does not import social.
+type PulseBoard interface {
+	WeeklyRank(ctx context.Context, userID string, start, end time.Time) (*PulseRank, error)
+	WeeklyFriends(ctx context.Context, userID string, start, end time.Time) (*PulseFriends, error)
+}
+
 // Service evaluates badges/goals/streaks and serves the HTTP surface.
 type Service struct {
-	repo   store
-	matches MatchReader
-	tours  TournamentReader
-	friends FriendChecker
-	hub    *sse.Hub
-	push   LocalizedPusher
-	now    func() time.Time
+	repo     store
+	matches  MatchReader
+	tours    TournamentReader
+	friends  FriendChecker
+	hub      *sse.Hub
+	push     LocalizedPusher
+	pushAll  AllPlatformPusher
+	board    PulseBoard
+	audience PulseAudience
+	now      func() time.Time
 }
 
 func NewService(pool *pgxpool.Pool, friends FriendChecker, hub *sse.Hub, push LocalizedPusher) *Service {
@@ -78,9 +102,12 @@ func (t repoTourReader) ChampionCountForUser(ctx context.Context, userID string)
 	return t.r.championCount(ctx, userID)
 }
 
-func (s *Service) SetMatchReader(r MatchReader)         { s.matches = r }
+func (s *Service) SetMatchReader(r MatchReader)           { s.matches = r }
 func (s *Service) SetTournamentReader(r TournamentReader) { s.tours = r }
-func (s *Service) SetNow(fn func() time.Time)           { s.now = fn }
+func (s *Service) SetNow(fn func() time.Time)             { s.now = fn }
+func (s *Service) SetPulseBoard(b PulseBoard)             { s.board = b }
+func (s *Service) SetPulsePush(p AllPlatformPusher)       { s.pushAll = p }
+func (s *Service) SetPulseAudience(a PulseAudience)       { s.audience = a }
 
 // OnMatchFinished implements score.AchievementHook — best-effort, never fails the caller.
 func (s *Service) OnMatchFinished(ctx context.Context, participantUserIDs []string, sport string) {
@@ -251,6 +278,47 @@ func (s *Service) SetGoal(ctx context.Context, userID string, weeklyTarget int, 
 	return s.goalState(ctx, userID)
 }
 
+// GetPulse is GET /v1/me/pulse. It does not write pulse_sends and does not
+// check a Pro gate. Goal current uses the same week count as GET /v1/me/goal.
+func (s *Service) GetPulse(ctx context.Context, userID string) (PulseCard, error) {
+	now := s.now()
+	start, end := ISOWeek(now)
+	card := PulseCard{
+		WeekStart: start,
+		WeekEnd:   end,
+		DaysLeft:  PulseDaysLeft(now),
+	}
+	goal, err := s.repo.getGoal(ctx, userID)
+	if err != nil {
+		return PulseCard{}, err
+	}
+	matches, err := s.matches.CountedMatches(ctx, userID)
+	if err != nil {
+		return PulseCard{}, err
+	}
+	current := matchesInWeek(matches, start)
+	if goal.WeeklyTarget >= 1 {
+		card.Goal = &PulseGoal{
+			Current: current,
+			Target:  goal.WeeklyTarget,
+			Reached: current >= goal.WeeklyTarget,
+		}
+	}
+	if s.board != nil {
+		rank, err := s.board.WeeklyRank(ctx, userID, start, end)
+		if err != nil {
+			return PulseCard{}, err
+		}
+		card.Rank = rank
+		friends, err := s.board.WeeklyFriends(ctx, userID, start, end)
+		if err != nil {
+			return PulseCard{}, err
+		}
+		card.Friends = friends
+	}
+	return card, nil
+}
+
 func (s *Service) goalState(ctx context.Context, userID string) (GoalState, error) {
 	now := s.now()
 	goal, err := s.repo.getGoal(ctx, userID)
@@ -311,6 +379,116 @@ func (s *Service) SendWeeklyReminders(ctx context.Context) error {
 			})
 	}
 	return nil
+}
+
+// pulseHasNews is the send gate: a goal that moved, a real rank, or a visible friend.
+// A target with current 0, days left, and a repeated friend are not news.
+func pulseHasNews(card PulseCard) bool {
+	if card.Goal != nil && card.Goal.Target >= 1 && card.Goal.Current >= 1 {
+		return true
+	}
+	if card.Rank != nil {
+		return true
+	}
+	return card.Friends != nil
+}
+
+// SendWeeklyPulses sends at most one weekly.pulse per user per ISO week.
+// The row is written before the push. A send error does not reopen the week.
+// No news means no row, so a later tick in the same hour can still send.
+func (s *Service) SendWeeklyPulses(ctx context.Context) error {
+	now := s.now()
+	cands, err := s.repo.listPulseCandidates(ctx)
+	if err != nil {
+		return err
+	}
+	for _, c := range cands {
+		zone := strings.TrimSpace(c.TimeZone)
+		if zone == "" {
+			continue
+		}
+		loc, err := time.LoadLocation(zone)
+		if err != nil {
+			continue
+		}
+		weekStart, ok := PulseWindow(now, loc)
+		if !ok {
+			continue
+		}
+		card, err := s.GetPulse(ctx, c.UserID)
+		if err != nil {
+			slog.Warn("achievements: pulse card", "user", c.UserID, "err", err)
+			continue
+		}
+		if !pulseHasNews(card) {
+			continue
+		}
+		inserted, err := s.repo.tryRecordPulse(ctx, c.UserID, weekStart)
+		if err != nil || !inserted {
+			continue
+		}
+		if s.pushAll == nil {
+			continue
+		}
+		_ = s.pushAll.SendLocalizedToAllPlatforms(ctx, c.UserID, "weekly.pulse",
+			"pulse_push_title", "pulse_push_body", nil,
+			map[string]string{
+				"type":          "weekly.pulse",
+				"title_loc_key": "pulse_push_title",
+				"body_loc_key":  "pulse_push_body",
+			})
+	}
+	return nil
+}
+
+// NotifyMatchPulse publishes pulse.updated for the match audience.
+// A lookup error is logged and does not fail the match write.
+func (s *Service) NotifyMatchPulse(ctx context.Context, participantIDs []string) {
+	ids := participantIDs
+	if s.audience != nil {
+		expanded, err := s.audience.MatchAudience(ctx, participantIDs)
+		if err != nil {
+			slog.Warn("achievements: pulse audience", "err", err)
+			return
+		}
+		ids = expanded
+	}
+	s.publishPulse(ids)
+}
+
+// NotifyNightPulse publishes pulse.updated after a social night.
+// The audience is players and group members, not the friend column.
+func (s *Service) NotifyNightPulse(ctx context.Context, playerIDs []string, groupID string) {
+	ids := playerIDs
+	if s.audience != nil {
+		expanded, err := s.audience.NightAudience(ctx, playerIDs, groupID)
+		if err != nil {
+			slog.Warn("achievements: pulse night audience", "err", err)
+			return
+		}
+		ids = expanded
+	}
+	s.publishPulse(ids)
+}
+
+func (s *Service) publishPulse(ids []string) {
+	if s.hub == nil {
+		return
+	}
+	start, _ := ISOWeek(s.now())
+	ev := sse.Event{
+		Type: "pulse.updated",
+		Data: map[string]any{"week_start": start.UTC().Format(time.RFC3339)},
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		s.hub.Publish(id, ev)
+	}
 }
 
 // ReconcileStreaks resets current_weeks for users whose last active week is stale.

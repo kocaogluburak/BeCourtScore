@@ -52,15 +52,8 @@ func buildStandings(members []GroupMember, matches []ladderMatch, sport string, 
 	}
 
 	for _, match := range matches {
-		if match.Sport != sport || match.PlayedAt.Before(start) || !match.PlayedAt.Before(end) {
-			continue
-		}
-		sideA := sideIDs(match.PlayerA, match.PlayerA2)
-		sideB := sideIDs(match.PlayerB, match.PlayerB2)
-		if len(sideA) == 0 || len(sideB) == 0 || !allMembers(sideA, memberSet) || !allMembers(sideB, memberSet) {
-			continue
-		}
-		if sharesID(sideA, sideB) {
+		sideA, sideB, ok := countableSides(match, memberSet, sport, start, end)
+		if !ok {
 			continue
 		}
 		applySide(rows, index, sideA, match.WinnerSide == "A", match.SetsA, match.SetsB)
@@ -81,6 +74,21 @@ func buildStandings(members []GroupMember, matches []ladderMatch, sport string, 
 		rows[i].Rank = i + 1
 	}
 	return rows
+}
+
+// countableSides reports whether a finished match writes ladder points for this
+// group. Guests and non-members drop the match. Shared by the group ladder
+// and the weekly pulse so the two ranks stay the same.
+func countableSides(match ladderMatch, memberSet map[string]GroupMember, sport string, start, end time.Time) (sideA, sideB []string, ok bool) {
+	if match.Sport != sport || match.PlayedAt.Before(start) || !match.PlayedAt.Before(end) {
+		return nil, nil, false
+	}
+	sideA = sideIDs(match.PlayerA, match.PlayerA2)
+	sideB = sideIDs(match.PlayerB, match.PlayerB2)
+	if len(sideA) == 0 || len(sideB) == 0 || !allMembers(sideA, memberSet) || !allMembers(sideB, memberSet) || sharesID(sideA, sideB) {
+		return nil, nil, false
+	}
+	return sideA, sideB, true
 }
 
 func standingLess(a, b Standing) bool {

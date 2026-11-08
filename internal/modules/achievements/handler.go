@@ -14,6 +14,7 @@ type svcFacade interface {
 	ListUserBadges(ctx context.Context, viewerID, targetID string, limit, offset int) ([]UserBadge, int64, error)
 	GetGoal(ctx context.Context, userID string) (GoalState, error)
 	SetGoal(ctx context.Context, userID string, weeklyTarget int, reminderOptIn bool) (GoalState, error)
+	GetPulse(ctx context.Context, userID string) (PulseCard, error)
 }
 
 type handler struct {
@@ -51,6 +52,16 @@ func (h *handler) getGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, state)
+}
+
+func (h *handler) getPulse(w http.ResponseWriter, r *http.Request) {
+	userID, _ := authkit.UserIDFromCtx(r.Context())
+	card, err := h.svc.GetPulse(r.Context(), userID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "failed to get pulse")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, card)
 }
 
 func (h *handler) putGoal(w http.ResponseWriter, r *http.Request) {

@@ -69,6 +69,17 @@ func ReconcileStreak(s Streak, now time.Time) Streak {
 	return s
 }
 
+// PulseDaysLeft is the number of UTC days left in the ISO week excluding today
+// (Monday 6 … Sunday 0). The goal card uses RemainingWeekDays, which counts today.
+func PulseDaysLeft(now time.Time) int {
+	u := now.UTC()
+	wd := int(u.Weekday())
+	if wd == 0 {
+		return 0
+	}
+	return 7 - wd
+}
+
 // RemainingWeekDays is the number of UTC calendar days left in the ISO week
 // including today (Mon=7 … Sun=1).
 func RemainingWeekDays(now time.Time) int {

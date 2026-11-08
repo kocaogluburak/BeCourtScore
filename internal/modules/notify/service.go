@@ -100,3 +100,28 @@ func (s *Service) SendLocalizedToUser(ctx context.Context, userID, typ, titleLoc
 	}
 	return nil
 }
+
+// SendLocalizedToAllPlatforms is the weekly pulse fan-out. It includes web
+// tokens. The goal reminder stays on SendLocalizedToUser and still skips web.
+// Best-effort — never fails the caller.
+func (s *Service) SendLocalizedToAllPlatforms(ctx context.Context, userID, typ, titleLocKey, bodyLocKey string, locArgs []string, data map[string]string) error {
+	tokens, err := s.repo.tokensWithPlatform(ctx, userID)
+	if err != nil {
+		slog.Warn("notify: list tokens failed", "user", userID, "err", err)
+		return nil
+	}
+	if len(tokens) == 0 {
+		return nil
+	}
+	msg := LocalizedPush{
+		Type:        typ,
+		TitleLocKey: titleLocKey,
+		BodyLocKey:  bodyLocKey,
+		LocArgs:     locArgs,
+		Data:        data,
+	}
+	if err := s.sender.SendLocalized(ctx, tokens, msg); err != nil {
+		slog.Warn("notify: localized send failed", "user", userID, "err", err)
+	}
+	return nil
+}

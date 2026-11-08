@@ -22,12 +22,12 @@ type CountedMatch struct {
 
 // EvalInput is the snapshot evaluators read. Pure — no I/O.
 type EvalInput struct {
-	Matches        []CountedMatch
-	MaxRating      int
-	ChampionCount  int
-	CurrentWeeks   int
-	LongestWeeks   int
-	WeeklyTarget   int
+	Matches       []CountedMatch
+	MaxRating     int
+	ChampionCount int
+	CurrentWeeks  int
+	LongestWeeks  int
+	WeeklyTarget  int
 }
 
 // EarnedBadges returns every catalog code whose unlock rule is met.

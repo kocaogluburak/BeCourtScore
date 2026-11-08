@@ -57,6 +57,10 @@ make test
 | `internal/modules/achievements/service_test.go` | OnMatchFinished persist+SSE+idempotent unlock, goal 0..14, friend badge gate |
 | `internal/modules/achievements/handler_test.go` | catalog 200, badges page envelope, 403 non-friend, PUT goal 400/200 |
 | `internal/modules/achievements/scheduler_test.go` | reminder window+dedupe, early-week skip, streak reconcile reset, backfill once, hour gate |
+| `internal/modules/achievements/pulse_test.go` | goal count matches `/v1/me/goal`, target 0 hides goal, current 0 keeps the row, days_left Mon 6 / Sun 0, Pacific Sunday evening is 6, pulse.updated audience |
+| `internal/modules/achievements/window_test.go` | PulseWindow city evenings, no row without news, one send per week, GET does not write `pulse_sends`, reminder stays on its own table |
+| `internal/modules/social/pulse_test.go` | ladder rank match, zero points nil, latest group then smaller id, leave group, social night scores rank not friends, friend order and cap, audience SQL |
+| `internal/modules/score/pulse_hook_test.go` | nil pulse hook still records a match; create, end, and delete notify; a panicking hook does not fail the write |
 | `internal/modules/notify/fcm_test.go` | NewFCMSenderFromEnv → Noop when unset/bad path/invalid JSON |
 | `internal/modules/identity/handler_test.go` | me/patch/delete + auth/refresh/logout |
 | `internal/modules/identity/service_test.go` | AuthWithProvider / Refresh / Revoke / DeleteUser |
@@ -119,6 +123,9 @@ make test
 | ACH-02 | done | ISO-week streak increment / gap reset / reconcile; weekly goal 0..14 |
 | ACH-03 | done | GET/PUT /v1/me/goal + GET badges page + 403 non-friend; SSE unlock + goal.progress |
 | ACH-04 | done | reminder window ≤3 days + opt-in + dedupe; localized push skips web; backfill once |
+| PULSE-01 | done | GET /v1/me/pulse goal/rank/friends/days_left; time_zone PATCH; no Pro gate; 401 |
+| PULSE-02 | done | local 18:00 last evening, pulse_sends once, web token gets loc keys, goal reminder still skips web |
+| PULSE-03 | done | pulse.updated after match create/delete and social night; nil hook keeps the match write |
 | FEED-01 | done | list shows only accepted friends' activities; non-friend & opted-out actors excluded |
 | FEED-02 | done | OnMatchRecorded creates 1 activity + SSE to friends; opted-out actor → no row, no fan-out |
 | FEED-03 | done | kudos idempotent; first kudos pushes author; self-kudos not pushed |

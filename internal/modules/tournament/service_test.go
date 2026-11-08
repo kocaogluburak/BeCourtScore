@@ -809,3 +809,63 @@ func TestSubmitResult_CompletedNightRatesDoublesOnce(t *testing.T) {
 		t.Fatal("tie should not rate")
 	}
 }
+
+type recSocialPulse struct {
+	ids     []string
+	groupID string
+	calls   int
+}
+
+func (r *recSocialPulse) OnSocialNight(_ context.Context, ids []string, groupID string) {
+	r.calls++
+	r.ids = append([]string{}, ids...)
+	r.groupID = groupID
+}
+
+func TestSubmitResult_CompletedNightRefreshesPulse(t *testing.T) {
+	a, b := "p1", "p3"
+	score := "16-12"
+	gid := "g1"
+	f := &fakeStore{
+		tournament: Tournament{ID: "t1", Sport: "PADEL", Format: "AMERICANO", CourtCount: 1, OrganizerID: "org", GroupID: &gid},
+		confirmed: []Participant{
+			{ID: "p1", UserID: "u1", DisplayName: "A"},
+			{ID: "p2", UserID: "u2", DisplayName: "B"},
+			{ID: "p3", UserID: "u3", DisplayName: "C"},
+			{ID: "p4", UserID: "u4", DisplayName: "D"},
+		},
+		md: matchDetail{
+			ID: "m1", TournamentID: "t1", Status: "READY", TournamentStatus: "ONGOING",
+			Format: "AMERICANO", OrganizerID: "org",
+			ParticipantAID: &a, ParticipantA2ID: sp("p2"),
+			ParticipantBID: &b, ParticipantB2ID: sp("p4"),
+		},
+		matches: []TournamentMatch{{
+			ID: "m1", Round: 1, PositionInRound: 1, Status: "READY",
+			ParticipantAID: &a, ParticipantA2ID: sp("p2"),
+			ParticipantBID: &b, ParticipantB2ID: sp("p4"),
+		}},
+		remaining: 0,
+	}
+	hook := &recSocialPulse{}
+	svc := newService(f)
+	svc.SetSocialPulse(hook)
+	if _, err := svc.SubmitResult(context.Background(), "org", "m1", "", score); err != nil {
+		t.Fatal(err)
+	}
+	if f.champion == "" {
+		t.Fatal("night did not finish")
+	}
+	if hook.calls != 1 || hook.groupID != "g1" {
+		t.Fatalf("hook=%+v", hook)
+	}
+	got := map[string]bool{}
+	for _, id := range hook.ids {
+		got[id] = true
+	}
+	for _, id := range []string{"u1", "u2", "u3", "u4"} {
+		if !got[id] {
+			t.Fatalf("missing %s in %v", id, hook.ids)
+		}
+	}
+}

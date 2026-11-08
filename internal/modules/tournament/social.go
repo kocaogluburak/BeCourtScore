@@ -2,6 +2,7 @@ package tournament
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -413,7 +414,33 @@ func (s *Service) advanceSocial(ctx context.Context, d matchDetail) error {
 		Type: "tournament.completed",
 		Data: map[string]any{"tournament_id": d.TournamentID, "champion_id": champ},
 	})
-	return s.store.setChampion(ctx, d.TournamentID, champ)
+	if err := s.store.setChampion(ctx, d.TournamentID, champ); err != nil {
+		return err
+	}
+	s.notifySocialPulse(ctx, t, parts)
+	return nil
+}
+
+func (s *Service) notifySocialPulse(ctx context.Context, t Tournament, parts []Participant) {
+	if s.pulse == nil || !isSocial(t.Format) {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("tournament: pulse hook panic", "err", rec)
+		}
+	}()
+	ids := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p.UserID != "" {
+			ids = append(ids, p.UserID)
+		}
+	}
+	groupID := ""
+	if t.GroupID != nil {
+		groupID = strings.TrimSpace(*t.GroupID)
+	}
+	s.pulse.OnSocialNight(ctx, ids, groupID)
 }
 
 func (s *Service) rateSocialDoubles(ctx context.Context, t Tournament, parts []Participant, matches []TournamentMatch) error {

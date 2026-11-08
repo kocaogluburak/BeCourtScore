@@ -17,6 +17,8 @@ type fakeStore struct {
 	streaks    []streakRow
 	reminders  map[string]bool
 	candidates []ReminderCandidate
+	pulseCands []PulseCandidate
+	pulses     map[string]bool
 	userIDs    []string
 	insertErr  error
 }
@@ -81,13 +83,27 @@ func (f *fakeStore) tryRecordReminder(_ context.Context, userID string, weekStar
 func (f *fakeStore) listReminderCandidates(context.Context, time.Time, time.Time) ([]ReminderCandidate, error) {
 	return f.candidates, nil
 }
+func (f *fakeStore) listPulseCandidates(context.Context) ([]PulseCandidate, error) {
+	return f.pulseCands, nil
+}
+func (f *fakeStore) tryRecordPulse(_ context.Context, userID string, weekStart time.Time) (bool, error) {
+	if f.pulses == nil {
+		f.pulses = map[string]bool{}
+	}
+	key := userID + weekStart.UTC().Format("2006-01-02")
+	if f.pulses[key] {
+		return false, nil
+	}
+	f.pulses[key] = true
+	return true, nil
+}
 func (f *fakeStore) listParticipantUserIDs(context.Context) ([]string, error) {
 	return f.userIDs, nil
 }
 func (f *fakeStore) countedMatches(context.Context, string) ([]CountedMatch, error) {
 	return nil, nil
 }
-func (f *fakeStore) maxRating(context.Context, string) (int, error)    { return 0, nil }
+func (f *fakeStore) maxRating(context.Context, string) (int, error)     { return 0, nil }
 func (f *fakeStore) championCount(context.Context, string) (int, error) { return 0, nil }
 
 type fakeMatches struct {

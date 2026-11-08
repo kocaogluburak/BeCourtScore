@@ -81,6 +81,11 @@ func main() {
 	tournamentSvc.SetDoublesRater(doublesNightSink{score: scoreSvc})
 
 	achSvc := achievements.NewService(pool, socialSvc, hub, notifySvc)
+	achSvc.SetPulseBoard(pulseBoard{social: socialSvc})
+	achSvc.SetPulseAudience(pulseAudience{social: socialSvc})
+	achSvc.SetPulsePush(notifySvc)
+	scoreSvc.SetPulseHook(matchPulseSink{ach: achSvc})
+	tournamentSvc.SetSocialPulse(nightPulseSink{ach: achSvc})
 	scoreSvc.SetAchievements(achSvc)
 	achSched := achievements.NewScheduler(achSvc)
 	go achSched.Run(ctx)
@@ -145,6 +150,69 @@ func main() {
 	if err = srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("shutdown error", "err", err)
 	}
+}
+
+// pulseBoard adapts social.Service to achievements.PulseBoard.
+// achievements and social do not import each other.
+type pulseBoard struct{ social *social.Service }
+
+func (p pulseBoard) WeeklyRank(ctx context.Context, userID string, start, end time.Time) (*achievements.PulseRank, error) {
+	if p.social == nil {
+		return nil, nil
+	}
+	rank, err := p.social.WeeklyRank(ctx, userID, start, end)
+	if err != nil || rank == nil {
+		return nil, err
+	}
+	return &achievements.PulseRank{
+		GroupID: rank.GroupID, GroupName: rank.GroupName, Rank: rank.Rank, Points: rank.Points,
+	}, nil
+}
+
+func (p pulseBoard) WeeklyFriends(ctx context.Context, userID string, start, end time.Time) (*achievements.PulseFriends, error) {
+	if p.social == nil {
+		return nil, nil
+	}
+	friends, err := p.social.WeeklyFriends(ctx, userID, start, end)
+	if err != nil || friends == nil {
+		return nil, err
+	}
+	return &achievements.PulseFriends{Names: friends.Names, Others: friends.Others}, nil
+}
+
+// pulseAudience adapts social audience queries to achievements.
+type pulseAudience struct{ social *social.Service }
+
+func (p pulseAudience) MatchAudience(ctx context.Context, participantIDs []string) ([]string, error) {
+	if p.social == nil {
+		return nil, nil
+	}
+	return p.social.MatchAudience(ctx, participantIDs)
+}
+
+func (p pulseAudience) NightAudience(ctx context.Context, playerIDs []string, groupID string) ([]string, error) {
+	if p.social == nil {
+		return nil, nil
+	}
+	return p.social.NightAudience(ctx, playerIDs, groupID)
+}
+
+type matchPulseSink struct{ ach *achievements.Service }
+
+func (m matchPulseSink) OnMatchPulse(ctx context.Context, participantUserIDs []string) {
+	if m.ach == nil {
+		return
+	}
+	m.ach.NotifyMatchPulse(ctx, participantUserIDs)
+}
+
+type nightPulseSink struct{ ach *achievements.Service }
+
+func (n nightPulseSink) OnSocialNight(ctx context.Context, playerIDs []string, groupID string) {
+	if n.ach == nil {
+		return
+	}
+	n.ach.NotifyNightPulse(ctx, playerIDs, groupID)
 }
 
 // socialLookup adapts social.Service to score.UserLookup without score importing social.

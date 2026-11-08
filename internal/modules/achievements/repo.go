@@ -20,6 +20,8 @@ type store interface {
 	listStreaks(ctx context.Context) ([]streakRow, error)
 	tryRecordReminder(ctx context.Context, userID string, weekStart time.Time) (bool, error)
 	listReminderCandidates(ctx context.Context, weekStart, weekEnd time.Time) ([]ReminderCandidate, error)
+	listPulseCandidates(ctx context.Context) ([]PulseCandidate, error)
+	tryRecordPulse(ctx context.Context, userID string, weekStart time.Time) (bool, error)
 	listParticipantUserIDs(ctx context.Context) ([]string, error)
 	countedMatches(ctx context.Context, userID string) ([]CountedMatch, error)
 	maxRating(ctx context.Context, userID string) (int, error)
@@ -203,6 +205,37 @@ func (r *repo) listReminderCandidates(ctx context.Context, weekStart, weekEnd ti
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+const pulseCandidatesSQL = `
+	SELECT id::text, time_zone FROM users WHERE time_zone IS NOT NULL`
+
+func (r *repo) listPulseCandidates(ctx context.Context) ([]PulseCandidate, error) {
+	rows, err := r.pool.Query(ctx, pulseCandidatesSQL)
+	if err != nil {
+		return nil, fmt.Errorf("list pulse candidates: %w", err)
+	}
+	defer rows.Close()
+	var out []PulseCandidate
+	for rows.Next() {
+		var c PulseCandidate
+		if err := rows.Scan(&c.UserID, &c.TimeZone); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (r *repo) tryRecordPulse(ctx context.Context, userID string, weekStart time.Time) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `
+		INSERT INTO pulse_sends (user_id, week_start)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING`, userID, weekStart)
+	if err != nil {
+		return false, fmt.Errorf("record pulse: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (r *repo) listParticipantUserIDs(ctx context.Context) ([]string, error) {

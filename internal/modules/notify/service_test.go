@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -138,5 +139,48 @@ func TestSendLocalizedToUser_SkipsWebAndFansOut(t *testing.T) {
 	}
 	if sender.localized.TitleLocKey != "goal_reminder_push_title" || sender.localized.Type != "goal.reminder" {
 		t.Fatalf("msg=%+v", sender.localized)
+	}
+	for _, tok := range sender.localizedTokens {
+		if tok.Platform == "web" {
+			t.Fatal("goal reminder must skip web")
+		}
+	}
+}
+
+func TestSendLocalizedToAllPlatforms_IncludesWebKeys(t *testing.T) {
+	sender := &recordingSender{}
+	store := &fakeNotifyStore{platformTokens: []PlatformToken{
+		{Token: "ios1", Platform: "ios"},
+		{Token: "web1", Platform: "web"},
+		{Token: "and1", Platform: "android"},
+	}}
+	svc := &Service{repo: store, sender: sender}
+	data := map[string]string{
+		"type":          "weekly.pulse",
+		"title_loc_key": "pulse_push_title",
+		"body_loc_key":  "pulse_push_body",
+	}
+	if err := svc.SendLocalizedToAllPlatforms(context.Background(), "u1", "weekly.pulse",
+		"pulse_push_title", "pulse_push_body", nil, data); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.localizedTokens) != 3 {
+		t.Fatalf("tokens=%v", sender.localizedTokens)
+	}
+	web, ok := localizedMessage(PlatformToken{Token: "web1", Platform: "web"}, sender.localized)
+	if !ok {
+		t.Fatal("web message skipped")
+	}
+	if _, hasNotification := web["notification"]; hasNotification {
+		t.Fatalf("web message has plain notification: %+v", web)
+	}
+	got, _ := web["data"].(map[string]string)
+	if got["title_loc_key"] != "pulse_push_title" || got["body_loc_key"] != "pulse_push_body" || got["type"] != "weekly.pulse" {
+		t.Fatalf("data=%v", got)
+	}
+	for _, v := range got {
+		if strings.Contains(v, " ") {
+			t.Fatalf("plain text in data: %q", v)
+		}
 	}
 }

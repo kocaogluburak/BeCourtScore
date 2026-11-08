@@ -159,6 +159,7 @@ func (h *handler) patchMe(w http.ResponseWriter, r *http.Request) {
 		Name        *string `json:"name"`
 		Surname     *string `json:"surname"`
 		ProfileIcon *string `json:"profile_icon"`
+		TimeZone    *string `json:"time_zone"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid request body")
@@ -170,6 +171,7 @@ func (h *handler) patchMe(w http.ResponseWriter, r *http.Request) {
 		Name:        body.Name,
 		Surname:     body.Surname,
 		ProfileIcon: body.ProfileIcon,
+		TimeZone:    body.TimeZone,
 	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -178,6 +180,10 @@ func (h *handler) patchMe(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, ErrConflict) {
 			httpx.Error(w, http.StatusConflict, "nickname already taken")
+			return
+		}
+		if errors.Is(err, ErrInvalid) {
+			httpx.Error(w, http.StatusBadRequest, "invalid time_zone")
 			return
 		}
 		httpx.Error(w, http.StatusInternalServerError, "update failed")
