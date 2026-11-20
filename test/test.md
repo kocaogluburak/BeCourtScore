@@ -75,6 +75,8 @@ make test
 | `internal/modules/equipment/accrual_test.go` | seconds→hours math; active-only accrual both types; nil/zero/lapsed no-op; threshold once + notified_at; refire after reset/lifespan raise; shoes vs string payload; sweep idempotent |
 | `internal/modules/equipment/service_test.go` | CRUD validation, ownership 404, activate swaps one active/type, Pro gate on every method, usage remaining/percent |
 | `internal/modules/equipment/handler_test.go` | list page envelope, create 201, 402 pro_required, 404 foreign, delete 204, activate/reset 200 |
+| `internal/modules/equipment/catalog_test.go` | catalog tree nesting (category→brand→model), empty sports kept, sport filter + invalid sport 400, `GET /v1/equipment/catalog` single object vs all-sports array |
+| `internal/migrate/catalog_seed_test.go` | static check of `036_equipment_catalog.sql`: 16 categories, 34 brands (+hex), 167 models, every §2.1 brand×category pair covered with 2–4 models, RUBBER_FH/BH identical, legacy index kept, backfill after seed |
 | `internal/modules/score/service_test.go` (accruer) | CreateMatch/EndLiveMatch call UsageAccruer with seconds; skip nil/zero |
 
 ## Shared happy-path cases
@@ -138,6 +140,7 @@ make test
 | EQUIP-01 | done | duration accrues onto active STRING+SHOES for all authenticated users; inactive/nil/zero no-op |
 | EQUIP-02 | done | threshold push once + notified_at; reset / raised lifespan refires; sweep idempotent |
 | EQUIP-03 | done | Free user list/CRUD/accrual open; create 0→2 OK, 3rd 402, delete<2 re-enables, Pro lapse keeps items; Pro unlimited; transaction lock on create |
+| EQUIP-04 | done | catalog seed (16 categories / 34 brands / 167 models, AC-8) verified statically + against Postgres 16 (counts, AC-22 backfill 0 unmigrated, idempotent re-run, old-binary INSERT gets `lineage_id`); `GET /v1/equipment/catalog` Bearer, sport filter, 400 on unknown sport |
 
 ## Öncelik (2 haftalık)
 

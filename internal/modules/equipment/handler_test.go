@@ -33,6 +33,9 @@ func (s *stubEquip) Activate(context.Context, string, string) (Usage, error) {
 	return s.one, s.err
 }
 func (s *stubEquip) Reset(context.Context, string, string) (Usage, error) { return s.one, s.err }
+func (s *stubEquip) GetCatalog(context.Context, string) ([]CatalogView, error) {
+	return nil, s.err
+}
 
 func withUser(r *http.Request, userID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), authkit.UserIDKey, userID))

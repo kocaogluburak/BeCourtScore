@@ -24,6 +24,7 @@ type store interface {
 	accrueActive(ctx context.Context, userID string, seconds int) ([]Item, error)
 	markNotified(ctx context.Context, id string) (bool, error)
 	listDueReminders(ctx context.Context) ([]Item, error)
+	catalogCategories(ctx context.Context, sports []string) ([]catalogRow, error)
 }
 
 type repo struct{ pool *pgxpool.Pool }

@@ -205,9 +205,10 @@ func (p *recPush) SendToUser(_ context.Context, _, _, _ string, data map[string]
 }
 
 type memStore struct {
-	mu    sync.Mutex
-	items []Item
-	seq   int
+	mu          sync.Mutex
+	items       []Item
+	seq         int
+	catalogRows []catalogRow
 }
 
 func newMemStore() *memStore { return &memStore{} }

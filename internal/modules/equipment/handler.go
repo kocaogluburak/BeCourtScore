@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"courtscore/internal/platform/authkit"
 	"courtscore/internal/platform/entitlement"
@@ -18,6 +19,7 @@ type svcFacade interface {
 	Delete(ctx context.Context, userID, id string) error
 	Activate(ctx context.Context, userID, id string) (Usage, error)
 	Reset(ctx context.Context, userID, id string) (Usage, error)
+	GetCatalog(ctx context.Context, sport string) ([]CatalogView, error)
 }
 
 type handler struct {
@@ -140,4 +142,20 @@ func (h *handler) reset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// catalog serves GET /v1/equipment/catalog?sport=. With sport: one {sport, categories}
+// object; without: array of all five sports. Intentionally not paginated (02-technical §2.2).
+func (h *handler) catalog(w http.ResponseWriter, r *http.Request) {
+	sport := r.URL.Query().Get("sport")
+	views, err := h.svc.GetCatalog(r.Context(), sport)
+	if err != nil {
+		writeErr(w, err, "failed to load equipment catalog")
+		return
+	}
+	if strings.TrimSpace(sport) != "" && len(views) == 1 {
+		httpx.JSON(w, http.StatusOK, views[0])
+		return
+	}
+	httpx.JSON(w, http.StatusOK, views)
 }
