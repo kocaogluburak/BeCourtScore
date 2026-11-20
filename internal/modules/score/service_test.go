@@ -1563,11 +1563,13 @@ func TestActivitySink_CreateEndAndDelete(t *testing.T) {
 
 type recAccruer struct {
 	userIDs []string
+	sports  []string
 	seconds []int
 }
 
-func (r *recAccruer) AccrueMatchDuration(_ context.Context, userID string, seconds int) {
+func (r *recAccruer) AccrueMatchDuration(_ context.Context, userID, sport string, seconds int) {
 	r.userIDs = append(r.userIDs, userID)
+	r.sports = append(r.sports, sport)
 	r.seconds = append(r.seconds, seconds)
 }
 
@@ -1607,8 +1609,8 @@ func TestUsageAccruer_CreateAndEndSkipNil(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(acc.seconds) != 1 || acc.seconds[0] != 90 || acc.userIDs[0] != "u1" {
-		t.Fatalf("create accrue=%v users=%v", acc.seconds, acc.userIDs)
+	if len(acc.seconds) != 1 || acc.seconds[0] != 90 || acc.userIDs[0] != "u1" || acc.sports[0] != "TENNIS" {
+		t.Fatalf("create accrue=%v users=%v sports=%v", acc.seconds, acc.userIDs, acc.sports)
 	}
 
 	endDur := 40
@@ -1617,7 +1619,92 @@ func TestUsageAccruer_CreateAndEndSkipNil(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(acc.seconds) != 2 || acc.seconds[1] != 40 {
-		t.Fatalf("end accrue=%v", acc.seconds)
+	if len(acc.seconds) != 2 || acc.seconds[1] != 40 || acc.sports[1] != "TENNIS" {
+		t.Fatalf("end accrue=%v sports=%v", acc.seconds, acc.sports)
+	}
+}
+
+func TestUsageAccruer_PassesMatchSport(t *testing.T) {
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	acc := &recAccruer{}
+	svc.SetAccruer(acc)
+	dur := 600
+	if _, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "PADEL", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A", DurationSeconds: &dur,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(acc.sports) != 1 || acc.sports[0] != "PADEL" {
+		t.Fatalf("sport must follow the match: %v", acc.sports)
+	}
+}
+
+type recEquipSink struct {
+	recorded []Match
+	deleted  []string
+	boom     bool
+}
+
+func (r *recEquipSink) OnMatchRecorded(_ context.Context, m Match) {
+	if r.boom {
+		panic("boom")
+	}
+	r.recorded = append(r.recorded, m)
+}
+func (r *recEquipSink) OnMatchDeleted(_ context.Context, matchID string) {
+	if r.boom {
+		panic("boom")
+	}
+	r.deleted = append(r.deleted, matchID)
+}
+
+func TestEquipmentMatchSink_CreateEndAndDelete(t *testing.T) {
+	store := &fakeScoreStore{live: LiveMatch{
+		ID: "live-1", Sport: "TENNIS", CreatedBy: "u1",
+		PlayerAName: "A", PlayerBName: "B",
+	}}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	sink := &recEquipSink{}
+	svc.SetEquipmentMatchSink(sink)
+
+	// No duration: the equipment match hook still fires (win-rate is independent of accrual).
+	if _, err := svc.CreateMatch(context.Background(), "u1", CreateInput{
+		Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.recorded) != 1 || sink.recorded[0].ID != "hist-1" {
+		t.Fatalf("create recorded=%+v", sink.recorded)
+	}
+	if _, err := svc.EndLiveMatch(context.Background(), "u1", "live-1", LiveEndInput{
+		SetsA: 2, SetsB: 0, WinnerSide: "A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.recorded) != 2 {
+		t.Fatalf("end recorded=%d", len(sink.recorded))
+	}
+	if err := svc.DeleteMatch(context.Background(), "u1", "hist-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.deleted) != 1 || sink.deleted[0] != "hist-1" {
+		t.Fatalf("deleted=%v", sink.deleted)
+	}
+}
+
+func TestEquipmentMatchSink_NilAndPanicDoNotFailWrites(t *testing.T) {
+	store := &fakeScoreStore{}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	in := CreateInput{Sport: "TENNIS", PlayerAName: "A", PlayerBName: "B", WinnerSide: "A"}
+	if _, err := svc.CreateMatch(context.Background(), "u1", in); err != nil {
+		t.Fatalf("nil sink: %v", err)
+	}
+	svc.SetEquipmentMatchSink(&recEquipSink{boom: true})
+	if _, err := svc.CreateMatch(context.Background(), "u1", in); err != nil {
+		t.Fatalf("panicking sink must not fail the write: %v", err)
+	}
+	if err := svc.DeleteMatch(context.Background(), "u1", "hist-1"); err != nil {
+		t.Fatalf("panicking delete sink must not fail the delete: %v", err)
 	}
 }

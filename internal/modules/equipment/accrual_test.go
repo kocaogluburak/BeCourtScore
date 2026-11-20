@@ -2,7 +2,6 @@ package equipment
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -39,27 +38,62 @@ func TestUsagePercent_Clamps(t *testing.T) {
 	}
 }
 
-func TestAccrue_ActiveOnlyBothTypes(t *testing.T) {
+func TestAccrue_ActiveOnlyAcrossCategories(t *testing.T) {
 	store := newMemStore()
 	svc := &Service{repo: store}
 	ctx := context.Background()
-	stringActive, _ := store.insert(ctx, "u1", CreateInput{Type: TypeString, Name: "Luxilon", LifespanHours: 25}, true)
-	_, _ = store.insert(ctx, "u1", CreateInput{Type: TypeString, Name: "Spare", LifespanHours: 25}, false)
-	shoes, _ := store.insert(ctx, "u1", CreateInput{Type: TypeShoes, Name: "Asics", LifespanHours: 60}, true)
-
-	svc.AccrueMatchDuration(ctx, "u1", 3600)
-
-	gotS, _ := store.getByID(ctx, stringActive.ID, "u1")
-	gotSpare, _ := store.getByID(ctx, store.items[1].ID, "u1")
-	gotShoes, _ := store.getByID(ctx, shoes.ID, "u1")
-	if gotS.AccumulatedSeconds != 3600 {
-		t.Fatalf("active string sec=%d", gotS.AccumulatedSeconds)
+	str := store.seed("u1", catTString, 25, true)
+	spare := store.seed("u1", catTString, 25, false)
+	shoes := store.seed("u1", catTShoes, 60, true)
+	retired := store.seed("u1", catTOver, 6, false)
+	other := store.seed("u2", catTShoes, 60, true)
+	if _, err := store.archive(ctx, retired.ID, "u1"); err != nil {
+		t.Fatal(err)
 	}
-	if gotSpare.AccumulatedSeconds != 0 {
-		t.Fatalf("inactive accrued=%d", gotSpare.AccumulatedSeconds)
+
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 3600)
+
+	if store.get(str.ID).AccumulatedSeconds != 3600 || store.get(shoes.ID).AccumulatedSeconds != 3600 {
+		t.Fatal("active rows of every category must accrue")
 	}
-	if gotShoes.AccumulatedSeconds != 3600 {
-		t.Fatalf("shoes sec=%d", gotShoes.AccumulatedSeconds)
+	if store.get(spare.ID).AccumulatedSeconds != 0 || store.get(retired.ID).AccumulatedSeconds != 0 || store.get(other.ID).AccumulatedSeconds != 0 {
+		t.Fatal("inactive / retired / foreign rows must not accrue")
+	}
+}
+
+func TestAccrue_SportScopedAllActiveCategoriesAtOnce(t *testing.T) {
+	store := newMemStore()
+	svc := &Service{repo: store}
+	ctx := context.Background()
+	racket := store.seed("u1", catTRacket, 0, true)
+	str := store.seed("u1", catTString, 25, true)
+	shoes := store.seed("u1", catTShoes, 60, true)
+	grip := store.seed("u1", catTOver, 6, true)
+	spareShoes := store.seed("u1", catTShoes, 60, false)
+	pala := store.seed("u1", catPala, 90, true)
+	rubber := store.seed("u1", catRubberFH, 45, true)
+
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 1800)
+
+	for name, it := range map[string]Item{"racket": racket, "string": str, "shoes": shoes, "overgrip": grip} {
+		if got := store.get(it.ID).AccumulatedSeconds; got != 1800 {
+			t.Errorf("tennis %s sec=%d want 1800 (one match accrues every active category)", name, got)
+		}
+	}
+	for name, it := range map[string]Item{"spare shoes": spareShoes, "padel pala": pala, "pingpong rubber": rubber} {
+		if got := store.get(it.ID).AccumulatedSeconds; got != 0 {
+			t.Errorf("%s accrued %d in a tennis match", name, got)
+		}
+	}
+
+	svc.AccrueMatchDuration(ctx, "u1", "padel", 600)
+	if store.get(pala.ID).AccumulatedSeconds != 600 || store.get(shoes.ID).AccumulatedSeconds != 1800 {
+		t.Fatal("padel match must only touch padel gear (sport is case-insensitive)")
+	}
+	svc.AccrueMatchDuration(ctx, "u1", "", 600)
+	svc.AccrueMatchDuration(ctx, "u1", "GOLF", 600)
+	if store.get(pala.ID).AccumulatedSeconds != 600 {
+		t.Fatal("empty/unknown sport must be a no-op")
 	}
 }
 
@@ -67,24 +101,22 @@ func TestAccrue_IgnoresNilZeroNegative(t *testing.T) {
 	store := newMemStore()
 	svc := &Service{repo: store}
 	ctx := context.Background()
-	it, _ := store.insert(ctx, "u1", CreateInput{Type: TypeString, Name: "Luxilon", LifespanHours: 25}, true)
+	it := store.seed("u1", catTString, 25, true)
 
-	svc.AccrueMatchDuration(ctx, "u1", 0)
-	svc.AccrueMatchDuration(ctx, "u1", -10)
-	got, _ := store.getByID(ctx, it.ID, "u1")
-	if got.AccumulatedSeconds != 0 {
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 0)
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", -10)
+	svc.AccrueMatchDuration(ctx, "", "TENNIS", 100)
+	if got := store.get(it.ID); got.AccumulatedSeconds != 0 {
 		t.Fatalf("zero/negative should no-op, sec=%d", got.AccumulatedSeconds)
 	}
 
-	svc.AccrueMatchDuration(ctx, "u1", 3600)
-	got, _ = store.getByID(ctx, it.ID, "u1")
-	if got.AccumulatedSeconds != 3600 {
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 3600)
+	if got := store.get(it.ID); got.AccumulatedSeconds != 3600 {
 		t.Fatalf("positive accrue sec=%d", got.AccumulatedSeconds)
 	}
 
-	svc.AccrueMatchDuration(ctx, "u1", 0)
-	got, _ = store.getByID(ctx, it.ID, "u1")
-	if got.AccumulatedSeconds != 3600 {
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 0)
+	if got := store.get(it.ID); got.AccumulatedSeconds != 3600 {
 		t.Fatalf("zero after accrue sec=%d", got.AccumulatedSeconds)
 	}
 }
@@ -94,25 +126,40 @@ func TestThreshold_FiresOnceAndIdempotent(t *testing.T) {
 	push := &recPush{}
 	svc := &Service{repo: store, push: push}
 	ctx := context.Background()
-	it, _ := store.insert(ctx, "u1", CreateInput{Type: TypeString, Name: "Luxilon", LifespanHours: 1}, true)
+	it := store.seed("u1", catTString, 1, true)
 
-	svc.AccrueMatchDuration(ctx, "u1", 1800)
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 1800)
 	if push.calls != 0 {
 		t.Fatalf("under threshold fired=%d", push.calls)
 	}
 
-	svc.AccrueMatchDuration(ctx, "u1", 1800)
-	if push.calls != 1 || push.typ != "equipment.reminder" || push.eqType != TypeString {
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 1800)
+	if push.calls != 1 || push.typ != "equipment.reminder" || push.eqType != TypeString || push.sport != "TENNIS" || push.hours != "1" {
 		t.Fatalf("first cross: %+v", push)
 	}
-	got, _ := store.getByID(ctx, it.ID, "u1")
-	if got.NotifiedAt == nil {
+	if store.get(it.ID).NotifiedAt == nil {
 		t.Fatal("notified_at not stamped")
 	}
 
-	svc.AccrueMatchDuration(ctx, "u1", 1800)
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 1800)
 	if push.calls != 1 {
 		t.Fatalf("re-fired: %d", push.calls)
+	}
+}
+
+func TestThreshold_NoneCategoryNeverReminds(t *testing.T) {
+	store := newMemStore()
+	push := &recPush{}
+	svc := &Service{repo: store, push: push}
+	ctx := context.Background()
+	racket := store.seed("u1", catTRacket, 0, true)
+
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 3600*500)
+	if push.calls != 0 || store.get(racket.ID).AccumulatedSeconds != 3600*500 {
+		t.Fatalf("racket must accrue silently: calls=%d", push.calls)
+	}
+	if err := svc.SweepReminders(ctx); err != nil || push.calls != 0 {
+		t.Fatalf("sweep must skip NONE: calls=%d err=%v", push.calls, err)
 	}
 }
 
@@ -121,9 +168,9 @@ func TestThreshold_RefiresAfterResetAndLifespanRaise(t *testing.T) {
 	push := &recPush{}
 	svc := &Service{repo: store, push: push}
 	ctx := context.Background()
-	it, _ := store.insert(ctx, "u1", CreateInput{Type: TypeShoes, Name: "Asics", LifespanHours: 1}, true)
+	it := store.seed("u1", catTShoes, 1, true)
 
-	svc.AccrueMatchDuration(ctx, "u1", 3600)
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 3600)
 	if push.calls != 1 || push.eqType != TypeShoes {
 		t.Fatalf("shoes payload: %+v", push)
 	}
@@ -131,7 +178,7 @@ func TestThreshold_RefiresAfterResetAndLifespanRaise(t *testing.T) {
 	if _, err := svc.Reset(ctx, "u1", it.ID); err != nil {
 		t.Fatal(err)
 	}
-	svc.AccrueMatchDuration(ctx, "u1", 3600)
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 3600)
 	if push.calls != 2 {
 		t.Fatalf("reset should allow re-fire: %d", push.calls)
 	}
@@ -140,11 +187,10 @@ func TestThreshold_RefiresAfterResetAndLifespanRaise(t *testing.T) {
 	if _, err := svc.Update(ctx, "u1", it.ID, UpdateInput{LifespanHours: &raised}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := store.getByID(ctx, it.ID, "u1")
-	if got.NotifiedAt != nil {
+	if store.get(it.ID).NotifiedAt != nil {
 		t.Fatal("raised lifespan should clear notified_at")
 	}
-	svc.AccrueMatchDuration(ctx, "u1", 3600*2)
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 3600*2)
 	if push.calls != 3 {
 		t.Fatalf("raise should allow re-fire: %d", push.calls)
 	}
@@ -155,9 +201,11 @@ func TestSweepReminders_BackstopIdempotent(t *testing.T) {
 	push := &recPush{}
 	svc := &Service{repo: store, push: push}
 	ctx := context.Background()
-	it, _ := store.insert(ctx, "u1", CreateInput{Type: TypeString, Name: "Luxilon", LifespanHours: 1}, true)
-	it.AccumulatedSeconds = 3600
-	store.items[0] = it
+	it := store.seed("u1", catTString, 1, true)
+	store.mu.Lock()
+	store.items[0].AccumulatedSeconds = 3600
+	store.mu.Unlock()
+	_ = it
 
 	if err := svc.SweepReminders(ctx); err != nil {
 		t.Fatal(err)
@@ -173,25 +221,156 @@ func TestSweepReminders_BackstopIdempotent(t *testing.T) {
 	}
 }
 
+func TestSweepReminders_HoursOrDaysCalendar(t *testing.T) {
+	store := newMemStore()
+	today := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return today }
+	push := &recPush{}
+	svc := &Service{repo: store, push: push, now: store.now}
+	ctx := context.Background()
+
+	// Tennis/STRING: 15h or 90d.
+	byPurchase := store.seed("u1", catTString, 15, true)
+	setItem(store, byPurchase.ID, func(it *Item) {
+		it.LifespanDays = intp(90)
+		it.PurchaseDate = strp("2026-08-22") // +90d = 2026-11-20 (due today)
+	})
+	notYet := store.seed("u2", catTString, 15, true)
+	setItem(store, notYet.ID, func(it *Item) {
+		it.LifespanDays = intp(90)
+		it.PurchaseDate = strp("2026-08-23") // +90d = 2026-11-21
+	})
+	byCreated := store.seed("u3", catTString, 15, true)
+	setItem(store, byCreated.ID, func(it *Item) {
+		it.LifespanDays = intp(30)
+		it.CreatedAt = today.AddDate(0, 0, -31) // no purchase_date: created_at date is the base
+	})
+	// HOURS categories ignore lifespan_days; NONE never reminds.
+	shoes := store.seed("u4", catTShoes, 60, true)
+	setItem(store, shoes.ID, func(it *Item) { it.LifespanDays = intp(1); it.PurchaseDate = strp("2020-01-01") })
+
+	if err := svc.SweepReminders(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if push.calls != 2 {
+		t.Fatalf("calendar sweep calls=%d want 2 (purchase + created_at bases)", push.calls)
+	}
+	if store.get(byPurchase.ID).NotifiedAt == nil || store.get(byCreated.ID).NotifiedAt == nil {
+		t.Fatal("due rows must be stamped")
+	}
+	if store.get(notYet.ID).NotifiedAt != nil || store.get(shoes.ID).NotifiedAt != nil {
+		t.Fatal("not-yet-due and HOURS rows must stay untouched")
+	}
+	if push.days != "30" && push.days != "90" {
+		t.Fatalf("payload days=%q", push.days)
+	}
+	if err := svc.SweepReminders(ctx); err != nil || push.calls != 2 {
+		t.Fatalf("calendar sweep must be idempotent: calls=%d err=%v", push.calls, err)
+	}
+}
+
+func TestCalendarDue_Boundaries(t *testing.T) {
+	now := time.Date(2026, 11, 20, 23, 59, 0, 0, time.UTC)
+	mk := func(threshold string, days *int, purchase *string, created time.Time) Item {
+		return Item{Category: Category{ThresholdType: threshold}, LifespanDays: days, PurchaseDate: purchase, CreatedAt: created}
+	}
+	created := time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC)
+	if calendarDue(mk(ThresholdHours, intp(1), nil, created), now) {
+		t.Fatal("HOURS must not use days")
+	}
+	if calendarDue(mk(ThresholdHoursOrDays, nil, nil, created), now) {
+		t.Fatal("no days => never due")
+	}
+	if calendarDue(mk(ThresholdHoursOrDays, intp(0), nil, created), now) {
+		t.Fatal("zero days => never due")
+	}
+	if !calendarDue(mk(ThresholdHoursOrDays, intp(1), strp("2026-11-19"), created), now) {
+		t.Fatal("purchase + 1d == today is due")
+	}
+	if calendarDue(mk(ThresholdHoursOrDays, intp(1), strp("2026-11-20"), created), now) {
+		t.Fatal("purchase today + 1d is tomorrow")
+	}
+}
+
+func TestThreshold_DaysTriggeredReminderCopyUsesDays(t *testing.T) {
+	store := newMemStore()
+	today := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return today }
+	push := &bodyPush{}
+	svc := &Service{repo: store, push: push, now: store.now}
+	str := store.seed("u1", catTString, 0, true)
+	setItem(store, str.ID, func(it *Item) { it.LifespanDays = intp(10); it.PurchaseDate = strp("2026-11-01") })
+	if err := svc.SweepReminders(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if push.calls != 1 || push.body != "Your string has 10 days — time to restring" {
+		t.Fatalf("push=%+v", push)
+	}
+}
+
+func setItem(m *memStore, id string, f func(*Item)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.items {
+		if m.items[i].ID == id {
+			f(&m.items[i])
+		}
+	}
+}
+
+type bodyPush struct {
+	calls int
+	body  string
+}
+
+func (p *bodyPush) SendToUser(_ context.Context, _, _, body string, _ map[string]string) error {
+	p.calls++
+	p.body = body
+	return nil
+}
+
+func TestReminderCopy_PerCategory(t *testing.T) {
+	for _, code := range []string{"STRING", "SHOES", "RUBBER_FH", "RUBBER_BH", "OVERGRIP", "PALA", "PADDLE"} {
+		title, body := reminderCopy(code, "15 hours")
+		if title == "" || body == "" {
+			t.Errorf("%s: empty copy", code)
+		}
+	}
+}
+
 type denyEquipGate struct{}
 
-func (denyEquipGate) AllowCloudSync(context.Context, string) error            { return entitlement.ErrProRequired }
-func (denyEquipGate) AllowStats(context.Context, string) error                { return entitlement.ErrProRequired }
-func (denyEquipGate) AllowHeadToHead(context.Context, string) error           { return entitlement.ErrProRequired }
-func (denyEquipGate) AllowAdvancedStats(context.Context, string) error        { return entitlement.ErrProRequired }
-func (denyEquipGate) AllowPublicLive(context.Context, string) error           { return entitlement.ErrProRequired }
-func (denyEquipGate) AllowLargeTournament(context.Context, string, int) error { return entitlement.ErrProRequired }
-func (denyEquipGate) AllowLargeLeague(context.Context, string, int) error     { return entitlement.ErrProRequired }
-func (denyEquipGate) AllowSeasonArchive(context.Context, string) error        { return entitlement.ErrProRequired }
-func (denyEquipGate) AllowEquipment(context.Context, string) error            { return entitlement.ErrProRequired }
-func (denyEquipGate) MaxParticipants(context.Context, string) (int, error)    { return 8, nil }
-func (denyEquipGate) IsPro(context.Context, string) (bool, error)             { return false, nil }
+func (denyEquipGate) AllowCloudSync(context.Context, string) error { return entitlement.ErrProRequired }
+func (denyEquipGate) AllowStats(context.Context, string) error     { return entitlement.ErrProRequired }
+func (denyEquipGate) AllowHeadToHead(context.Context, string) error {
+	return entitlement.ErrProRequired
+}
+func (denyEquipGate) AllowAdvancedStats(context.Context, string) error {
+	return entitlement.ErrProRequired
+}
+func (denyEquipGate) AllowPublicLive(context.Context, string) error {
+	return entitlement.ErrProRequired
+}
+func (denyEquipGate) AllowLargeTournament(context.Context, string, int) error {
+	return entitlement.ErrProRequired
+}
+func (denyEquipGate) AllowLargeLeague(context.Context, string, int) error {
+	return entitlement.ErrProRequired
+}
+func (denyEquipGate) AllowSeasonArchive(context.Context, string) error {
+	return entitlement.ErrProRequired
+}
+func (denyEquipGate) AllowEquipment(context.Context, string) error         { return entitlement.ErrProRequired }
+func (denyEquipGate) MaxParticipants(context.Context, string) (int, error) { return 8, nil }
+func (denyEquipGate) IsPro(context.Context, string) (bool, error)          { return false, nil }
 
 type recPush struct {
 	calls  int
 	typ    string
 	eqType string
+	sport  string
 	hours  string
+	days   string
 }
 
 func (p *recPush) SendToUser(_ context.Context, _, _, _ string, data map[string]string) error {
@@ -199,210 +378,9 @@ func (p *recPush) SendToUser(_ context.Context, _, _, _ string, data map[string]
 	if data != nil {
 		p.typ = data["type"]
 		p.eqType = data["equipment_type"]
+		p.sport = data["sport"]
 		p.hours = data["hours"]
+		p.days = data["days"]
 	}
 	return nil
-}
-
-type memStore struct {
-	mu    sync.Mutex
-	items []Item
-	seq   int
-}
-
-func newMemStore() *memStore { return &memStore{} }
-
-func (m *memStore) nextID() string {
-	m.seq++
-	return "eq-" + itoa(m.seq)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [8]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
-}
-
-func (m *memStore) insertCreate(_ context.Context, userID string, in CreateInput, isPro bool) (Item, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var count int64
-	var hasActive bool
-	for _, it := range m.items {
-		if it.UserID == userID {
-			count++
-			if it.Type == in.Type && it.IsActive {
-				hasActive = true
-			}
-		}
-	}
-	if !isPro && count >= freeEquipmentLimit {
-		return Item{}, entitlement.ErrProRequired
-	}
-	return m.insertLocked(userID, in, !hasActive), nil
-}
-
-func (m *memStore) insert(_ context.Context, userID string, in CreateInput, isActive bool) (Item, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.insertLocked(userID, in, isActive), nil
-}
-
-func (m *memStore) insertLocked(userID string, in CreateInput, isActive bool) Item {
-	now := time.Now()
-	it := Item{
-		ID: m.nextID(), UserID: userID, Type: in.Type, Name: in.Name,
-		PurchaseDate: in.PurchaseDate, LifespanHours: in.LifespanHours,
-		IsActive: isActive, CreatedAt: now, UpdatedAt: now,
-	}
-	m.items = append(m.items, it)
-	return it
-}
-
-func (m *memStore) listForUser(_ context.Context, userID string, limit, offset int) ([]Item, int64, error) {
-	var all []Item
-	for _, it := range m.items {
-		if it.UserID == userID {
-			all = append(all, it)
-		}
-	}
-	total := int64(len(all))
-	if offset > len(all) {
-		return nil, total, nil
-	}
-	all = all[offset:]
-	if limit < len(all) {
-		all = all[:limit]
-	}
-	return all, total, nil
-}
-
-func (m *memStore) getByID(_ context.Context, id, userID string) (Item, error) {
-	for _, it := range m.items {
-		if it.ID == id && it.UserID == userID {
-			return it, nil
-		}
-	}
-	return Item{}, ErrNotFound
-}
-
-func (m *memStore) update(_ context.Context, id, userID string, in UpdateInput, clearNotified bool) (Item, error) {
-	for i, it := range m.items {
-		if it.ID != id || it.UserID != userID {
-			continue
-		}
-		if in.Name != nil {
-			it.Name = *in.Name
-		}
-		if in.LifespanHours != nil {
-			it.LifespanHours = *in.LifespanHours
-		}
-		if in.SetPurchaseDate {
-			it.PurchaseDate = in.PurchaseDate
-		}
-		if clearNotified {
-			it.NotifiedAt = nil
-		}
-		it.UpdatedAt = time.Now()
-		m.items[i] = it
-		return it, nil
-	}
-	return Item{}, ErrNotFound
-}
-
-func (m *memStore) delete(_ context.Context, id, userID string) error {
-	for i, it := range m.items {
-		if it.ID == id && it.UserID == userID {
-			m.items = append(m.items[:i], m.items[i+1:]...)
-			return nil
-		}
-	}
-	return ErrNotFound
-}
-
-func (m *memStore) hasActive(_ context.Context, userID, typ string) (bool, error) {
-	for _, it := range m.items {
-		if it.UserID == userID && it.Type == typ && it.IsActive {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (m *memStore) activate(_ context.Context, id, userID string) (Item, error) {
-	var target *Item
-	var typ string
-	for i := range m.items {
-		if m.items[i].ID == id && m.items[i].UserID == userID {
-			target = &m.items[i]
-			typ = m.items[i].Type
-			break
-		}
-	}
-	if target == nil {
-		return Item{}, ErrNotFound
-	}
-	for i := range m.items {
-		if m.items[i].UserID == userID && m.items[i].Type == typ && m.items[i].IsActive && m.items[i].ID != id {
-			m.items[i].IsActive = false
-		}
-	}
-	target.IsActive = true
-	target.NotifiedAt = nil
-	target.UpdatedAt = time.Now()
-	return *target, nil
-}
-
-func (m *memStore) reset(_ context.Context, id, userID string) (Item, error) {
-	for i, it := range m.items {
-		if it.ID == id && it.UserID == userID {
-			it.AccumulatedSeconds = 0
-			it.NotifiedAt = nil
-			it.UpdatedAt = time.Now()
-			m.items[i] = it
-			return it, nil
-		}
-	}
-	return Item{}, ErrNotFound
-}
-
-func (m *memStore) accrueActive(_ context.Context, userID string, seconds int) ([]Item, error) {
-	var out []Item
-	for i := range m.items {
-		if m.items[i].UserID == userID && m.items[i].IsActive {
-			m.items[i].AccumulatedSeconds += int64(seconds)
-			m.items[i].UpdatedAt = time.Now()
-			out = append(out, m.items[i])
-		}
-	}
-	return out, nil
-}
-
-func (m *memStore) markNotified(_ context.Context, id string) (bool, error) {
-	for i := range m.items {
-		if m.items[i].ID == id && m.items[i].NotifiedAt == nil {
-			now := time.Now()
-			m.items[i].NotifiedAt = &now
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (m *memStore) listDueReminders(context.Context) ([]Item, error) {
-	var out []Item
-	for _, it := range m.items {
-		if it.IsActive && it.NotifiedAt == nil && crossedThreshold(it.AccumulatedSeconds, it.LifespanHours) {
-			out = append(out, it)
-		}
-	}
-	return out, nil
 }
