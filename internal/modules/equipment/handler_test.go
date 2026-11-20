@@ -19,6 +19,8 @@ type stubEquip struct {
 	one   Usage
 	err   error
 
+	winRate WinRate
+
 	gotFilter ListFilter
 	gotCreate CreateInput
 	gotUpdate UpdateInput
@@ -47,6 +49,9 @@ func (s *stubEquip) Archive(context.Context, string, string) (Usage, error) { re
 func (s *stubEquip) Renew(_ context.Context, _, _ string, in RenewInput) (Usage, error) {
 	s.gotRenew = in
 	return s.one, s.err
+}
+func (s *stubEquip) WinRate(context.Context, string, string) (WinRate, error) {
+	return s.winRate, s.err
 }
 func (s *stubEquip) GetCatalog(context.Context, string) ([]CatalogView, error) {
 	return nil, s.err

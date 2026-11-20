@@ -40,6 +40,7 @@ type memStore struct {
 	models      map[string]memModel
 	catalogRows []catalogRow
 	now         func() time.Time
+	usage       []usageRow
 }
 
 func newMemStore() *memStore {
@@ -351,12 +352,12 @@ func (m *memStore) renew(_ context.Context, id, userID string, row itemRow) (Ite
 	return m.insertLocked(userID, row, wasActive, lineage), nil
 }
 
-func (m *memStore) accrueActive(_ context.Context, userID string, seconds int) ([]Item, error) {
+func (m *memStore) accrueActive(_ context.Context, userID, sport string, seconds int) ([]Item, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []Item
 	for i := range m.items {
-		if m.items[i].UserID == userID && m.items[i].IsActive && m.items[i].RetiredAt == nil {
+		if m.items[i].UserID == userID && m.items[i].Sport == sport && m.items[i].IsActive && m.items[i].RetiredAt == nil {
 			m.items[i].AccumulatedSeconds += int64(seconds)
 			m.items[i].UpdatedAt = m.now()
 			out = append(out, m.hydrate(m.items[i]))
@@ -384,7 +385,7 @@ func (m *memStore) listDueReminders(context.Context) ([]Item, error) {
 	var out []Item
 	for _, it := range m.items {
 		it = m.hydrate(it)
-		if it.IsActive && it.RetiredAt == nil && it.NotifiedAt == nil && crossedThreshold(it) {
+		if it.IsActive && it.RetiredAt == nil && it.NotifiedAt == nil && crossedThreshold(it, m.now()) {
 			out = append(out, it)
 		}
 	}
@@ -405,3 +406,55 @@ func (m *memStore) get(id string) Item {
 
 func strp(s string) *string { return &s }
 func intp(n int) *int       { return &n }
+
+func (m *memStore) activeItemsForSport(_ context.Context, userID, sport string) ([]Item, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Item
+	for _, it := range m.items {
+		if it.UserID == userID && it.Sport == sport && it.IsActive && it.RetiredAt == nil {
+			out = append(out, m.hydrate(it))
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) insertUsage(_ context.Context, u usageRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.usage {
+		if e.MatchID == u.MatchID && e.UserID == u.UserID {
+			return nil
+		}
+	}
+	m.usage = append(m.usage, u)
+	return nil
+}
+
+func (m *memStore) deleteUsage(_ context.Context, matchID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.usage[:0]
+	for _, e := range m.usage {
+		if e.MatchID != matchID {
+			kept = append(kept, e)
+		}
+	}
+	m.usage = kept
+	return nil
+}
+
+func (m *memStore) usageCounts(_ context.Context, userID, sport, comboKey string) (int, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var played, won int
+	for _, e := range m.usage {
+		if e.UserID == userID && e.Sport == sport && e.ComboKey == comboKey {
+			played++
+			if e.Won {
+				won++
+			}
+		}
+	}
+	return played, won, nil
+}

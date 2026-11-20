@@ -356,7 +356,7 @@ func TestProLapse_GrandfathersExistingItemsBlocksNewUntilBelowTwo(t *testing.T) 
 	if _, err := lapsedSvc.Activate(ctx, "u1", e2.ID); err != nil {
 		t.Fatalf("lapsed activate=%v", err)
 	}
-	lapsedSvc.AccrueMatchDuration(ctx, "u1", 3600)
+	lapsedSvc.AccrueMatchDuration(ctx, "u1", "TENNIS", 3600)
 	gotE2, err := lapsedSvc.Get(ctx, "u1", e2.ID)
 	if err != nil || gotE2.AccumulatedHours != 1.0 {
 		t.Fatalf("lapsed accrue=%+v err=%v", gotE2, err)
@@ -385,7 +385,7 @@ func TestFreeUser_ListAndAccrueWithoutPro(t *testing.T) {
 	if _, _, err := svc.List(ctx, "u1", ListFilter{}, 20, 0); err != nil {
 		t.Fatalf("list=%v", err)
 	}
-	svc.AccrueMatchDuration(ctx, "u1", 3600)
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 3600)
 	if got := store.get(it.ID); got.AccumulatedSeconds != 3600 {
 		t.Fatalf("accrue sec=%d", got.AccumulatedSeconds)
 	}
@@ -437,7 +437,7 @@ func TestRenew_ArchivesOldAndOpensNewGenerationInSameLineage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc.AccrueMatchDuration(ctx, "u1", 7200)
+	svc.AccrueMatchDuration(ctx, "u1", "TENNIS", 7200)
 
 	neu, err := svc.Renew(ctx, "u1", old.ID, RenewInput{})
 	if err != nil {

@@ -220,6 +220,14 @@ type Service struct {
 	repo store
 	gate entitlement.Gate
 	push PushSender
+	now  func() time.Time // test seam; nil = time.Now
+}
+
+func (s *Service) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 // NewService wires equipment to Postgres.
@@ -310,14 +318,37 @@ func crossedHours(sec int64, lifespanHours int) bool {
 	return sec >= int64(lifespanHours)*3600
 }
 
-// crossedThreshold reports whether the item is due for a reminder (by category threshold type).
-func crossedThreshold(it Item) bool {
+// calendarDue reports whether the day lifespan elapsed: (purchase_date ?? created_at date) +
+// lifespan_days <= today (UTC). Only HOURS_OR_DAYS categories use it.
+func calendarDue(it Item, now time.Time) bool {
+	if it.Category.ThresholdType != ThresholdHoursOrDays || it.LifespanDays == nil || *it.LifespanDays <= 0 {
+		return false
+	}
+	base := it.CreatedAt.UTC()
+	if it.PurchaseDate != nil {
+		if d, err := time.Parse("2006-01-02", *it.PurchaseDate); err == nil {
+			base = d
+		}
+	}
+	baseDay := time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, time.UTC)
+	n := now.UTC()
+	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
+	return !today.Before(baseDay.AddDate(0, 0, *it.LifespanDays))
+}
+
+// hoursDue reports whether play time reached the hour lifespan (HOURS / HOURS_OR_DAYS).
+func hoursDue(it Item) bool {
 	switch it.Category.ThresholdType {
 	case ThresholdHours, ThresholdHoursOrDays:
 		return it.LifespanHours != nil && crossedHours(it.AccumulatedSeconds, *it.LifespanHours)
 	default:
 		return false
 	}
+}
+
+// crossedThreshold reports whether the item is due for a reminder (by category threshold type).
+func crossedThreshold(it Item, now time.Time) bool {
+	return hoursDue(it) || calendarDue(it, now)
 }
 
 // legacyType derives the pre-gear-bag `type` field: only Tennis STRING/SHOES expose it.
@@ -790,17 +821,20 @@ func (s *Service) Renew(ctx context.Context, userID, id string, in RenewInput) (
 	return UsageFrom(it), nil
 }
 
-// AccrueMatchDuration implements score.UsageAccruer. Best-effort; never fails the caller.
-func (s *Service) AccrueMatchDuration(ctx context.Context, userID string, seconds int) {
+// AccrueMatchDuration implements score.UsageAccruer. It adds seconds onto every active,
+// non-retired item of the user in that sport (all categories at once). Best-effort; never
+// fails the caller.
+func (s *Service) AccrueMatchDuration(ctx context.Context, userID, sport string, seconds int) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			slog.Warn("equipment: accrue panic", "err", rec)
 		}
 	}()
-	if seconds <= 0 || userID == "" {
+	sport = strings.ToUpper(strings.TrimSpace(sport))
+	if seconds <= 0 || userID == "" || !validSport(sport) {
 		return
 	}
-	items, err := s.repo.accrueActive(ctx, userID, seconds)
+	items, err := s.repo.accrueActive(ctx, userID, sport, seconds)
 	if err != nil {
 		slog.Warn("equipment: accrue", "err", err, "user", userID)
 		return
@@ -824,7 +858,7 @@ func (s *Service) SweepReminders(ctx context.Context) error {
 }
 
 func (s *Service) maybeRemind(ctx context.Context, it Item) {
-	if it.NotifiedAt != nil || it.RetiredAt != nil || !crossedThreshold(it) {
+	if it.NotifiedAt != nil || it.RetiredAt != nil || !crossedThreshold(it, s.clock()) {
 		return
 	}
 	ok, err := s.repo.markNotified(ctx, it.ID)
@@ -842,17 +876,25 @@ func (s *Service) sendReminder(ctx context.Context, it Item) {
 	if s.push == nil {
 		return
 	}
-	hours := ""
+	hours, days := "", ""
 	if it.LifespanHours != nil {
 		hours = fmt.Sprintf("%d", *it.LifespanHours)
 	}
-	title, body := reminderCopy(it.Category.Code, hours)
+	if it.LifespanDays != nil {
+		days = fmt.Sprintf("%d", *it.LifespanDays)
+	}
+	usage := hours + " hours"
+	if !hoursDue(it) {
+		usage = days + " days"
+	}
+	title, body := reminderCopy(it.Category.Code, usage)
 	data := map[string]string{
 		"type":           "equipment.reminder",
 		"equipment_id":   it.ID,
 		"equipment_type": it.Category.Code,
 		"sport":          it.Sport,
 		"hours":          hours,
+		"days":           days,
 	}
 	if err := s.push.SendToUser(ctx, it.UserID, title, body, data); err != nil {
 		slog.Warn("equipment: push", "err", err, "user", it.UserID)
@@ -860,23 +902,23 @@ func (s *Service) sendReminder(ctx context.Context, it Item) {
 }
 
 // reminderCopy is the English fallback title/body of the data-only push; the clients
-// render their own localized text from the data payload.
-func reminderCopy(code, hours string) (string, string) {
+// render their own localized text from the data payload. usage is e.g. "15 hours" / "90 days".
+func reminderCopy(code, usage string) (string, string) {
 	switch code {
 	case "SHOES":
 		return "Time for new shoes",
-			fmt.Sprintf("Your shoes have %s hours — time for a new pair", hours)
+			fmt.Sprintf("Your shoes have %s — time for a new pair", usage)
 	case "STRING":
 		return "Time to restring",
-			fmt.Sprintf("Your string has %s hours — time to restring", hours)
+			fmt.Sprintf("Your string has %s — time to restring", usage)
 	case "RUBBER_FH", "RUBBER_BH":
 		return "Time for a new rubber",
-			fmt.Sprintf("Your rubber has %s hours — time to replace it", hours)
+			fmt.Sprintf("Your rubber has %s — time to replace it", usage)
 	case "OVERGRIP":
 		return "Time for a new overgrip",
-			fmt.Sprintf("Your overgrip has %s hours — time to replace it", hours)
+			fmt.Sprintf("Your overgrip has %s — time to replace it", usage)
 	default:
 		return "Time to replace your gear",
-			fmt.Sprintf("Your gear has %s hours — time to replace it", hours)
+			fmt.Sprintf("Your gear has %s — time to replace it", usage)
 	}
 }

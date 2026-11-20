@@ -27,9 +27,14 @@ type store interface {
 	reset(ctx context.Context, id, userID string) (Item, error)
 	archive(ctx context.Context, id, userID string) (Item, error)
 	renew(ctx context.Context, id, userID string, row itemRow) (Item, error)
-	accrueActive(ctx context.Context, userID string, seconds int) ([]Item, error)
+	accrueActive(ctx context.Context, userID, sport string, seconds int) ([]Item, error)
 	markNotified(ctx context.Context, id string) (bool, error)
 	listDueReminders(ctx context.Context) ([]Item, error)
+
+	activeItemsForSport(ctx context.Context, userID, sport string) ([]Item, error)
+	insertUsage(ctx context.Context, u usageRow) error
+	deleteUsage(ctx context.Context, matchID string) error
+	usageCounts(ctx context.Context, userID, sport, comboKey string) (played, won int, err error)
 }
 
 type repo struct{ pool *pgxpool.Pool }
@@ -463,12 +468,12 @@ func (r *repo) renew(ctx context.Context, id, userID string, row itemRow) (Item,
 	return it, nil
 }
 
-func (r *repo) accrueActive(ctx context.Context, userID string, seconds int) ([]Item, error) {
+func (r *repo) accrueActive(ctx context.Context, userID, sport string, seconds int) ([]Item, error) {
 	rows, err := r.pool.Query(ctx, `
 		UPDATE equipment
-		   SET accumulated_seconds = accumulated_seconds + $2, updated_at = NOW()
-		 WHERE user_id = $1 AND is_active = TRUE AND retired_at IS NULL
-		 RETURNING id`, userID, seconds)
+		   SET accumulated_seconds = accumulated_seconds + $3, updated_at = NOW()
+		 WHERE user_id = $1 AND sport = $2 AND is_active = TRUE AND retired_at IS NULL
+		 RETURNING id`, userID, sport, seconds)
 	if err != nil {
 		return nil, fmt.Errorf("accrue equipment: %w", err)
 	}
@@ -509,11 +514,61 @@ func (r *repo) markNotified(ctx context.Context, id string) (bool, error) {
 	return tag.RowsAffected() > 0, nil
 }
 
+// listDueReminders finds active items past their hour lifespan, or (HOURS_OR_DAYS only)
+// past (purchase_date ?? created_at date) + lifespan_days, that were never notified.
 func (r *repo) listDueReminders(ctx context.Context) ([]Item, error) {
 	return selectMany(ctx, r.pool, `
-		 WHERE e.is_active AND e.retired_at IS NULL
-		   AND e.notified_at IS NULL
-		   AND c.threshold_type IN ('HOURS', 'HOURS_OR_DAYS')
-		   AND e.lifespan_hours IS NOT NULL
-		   AND e.accumulated_seconds >= e.lifespan_hours::bigint * 3600`)
+		 WHERE e.is_active AND e.retired_at IS NULL AND e.notified_at IS NULL
+		   AND (
+		        (c.threshold_type IN ('HOURS', 'HOURS_OR_DAYS')
+		         AND e.lifespan_hours IS NOT NULL
+		         AND e.accumulated_seconds >= e.lifespan_hours::bigint * 3600)
+		     OR (c.threshold_type = 'HOURS_OR_DAYS'
+		         AND e.lifespan_days IS NOT NULL
+		         AND COALESCE(e.purchase_date, (e.created_at AT TIME ZONE 'UTC')::date) + e.lifespan_days
+		             <= (NOW() AT TIME ZONE 'UTC')::date)
+		   )`)
+}
+
+// activeItemsForSport returns the user's live active items of one sport (win-rate combo source).
+func (r *repo) activeItemsForSport(ctx context.Context, userID, sport string) ([]Item, error) {
+	return selectMany(ctx, r.pool,
+		` WHERE e.user_id = $1 AND e.sport = $2 AND e.is_active AND e.retired_at IS NULL
+		  ORDER BY c.display_order, e.id`, userID, sport)
+}
+
+func (r *repo) insertUsage(ctx context.Context, u usageRow) error {
+	if !isUUID(u.MatchID) {
+		return fmt.Errorf("%w: match id", ErrInvalid)
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO match_equipment_usage (match_id, user_id, sport, combo_key, item_ids, won, played_at)
+		SELECT $1, $2, $3, $4, $5::uuid[], $6, $7
+		 WHERE NOT EXISTS (SELECT 1 FROM match_equipment_usage WHERE match_id = $1 AND user_id = $2)`,
+		u.MatchID, u.UserID, u.Sport, u.ComboKey, u.ItemIDs, u.Won, u.PlayedAt)
+	if err != nil {
+		return fmt.Errorf("insert match equipment usage: %w", err)
+	}
+	return nil
+}
+
+func (r *repo) deleteUsage(ctx context.Context, matchID string) error {
+	if !isUUID(matchID) {
+		return nil
+	}
+	if _, err := r.pool.Exec(ctx, `DELETE FROM match_equipment_usage WHERE match_id = $1`, matchID); err != nil {
+		return fmt.Errorf("delete match equipment usage: %w", err)
+	}
+	return nil
+}
+
+func (r *repo) usageCounts(ctx context.Context, userID, sport, comboKey string) (played, won int, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE won)
+		  FROM match_equipment_usage
+		 WHERE user_id = $1 AND sport = $2 AND combo_key = $3`, userID, sport, comboKey).Scan(&played, &won)
+	if err != nil {
+		return 0, 0, fmt.Errorf("match equipment usage counts: %w", err)
+	}
+	return played, won, nil
 }

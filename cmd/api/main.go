@@ -97,6 +97,7 @@ func main() {
 	equipmentSvc := equipment.NewService(pool, notifySvc)
 	equipmentSvc.SetGate(billingSvc)
 	scoreSvc.SetAccruer(equipmentSvc)
+	scoreSvc.SetEquipmentMatchSink(equipmentSvc)
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()

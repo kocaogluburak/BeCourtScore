@@ -72,13 +72,15 @@ make test
 | `internal/modules/billing/service_test.go` | free under cap / 10+ lock / `AllowHeadToHead` open at 10 & locked at 11 / active / grace / expired / Google RTDN / Apple JWS |
 | `internal/platform/sse/hub_test.go` | subscribe/publish |
 | `internal/platform/httpx/pagination_test.go` | page clamp |
-| `internal/modules/equipment/accrual_test.go` | seconds→hours math; active-only accrual across categories (spare/retired/foreign skipped); nil/zero/lapsed no-op; threshold once + notified_at; NONE categories never remind; refire after reset/lifespan raise; sweep idempotent; per-category reminder copy + payload (`equipment_type`, `sport`, `hours`) |
+| `internal/modules/equipment/accrual_test.go` | seconds→hours math; **sport-scoped** accrual (one match accrues every active category of that sport, other sports/spare/retired/foreign skipped, empty/unknown sport no-op); nil/zero/lapsed no-op; threshold once + notified_at; NONE categories never remind; refire after reset/lifespan raise; sweep idempotent; HOURS_OR_DAYS calendar sweep (purchase_date / created_at base, boundaries, days-based copy); per-category reminder copy + payload (`equipment_type`, `sport`, `hours`, `days`) |
 | `internal/modules/equipment/service_test.go` | create validation matrix (sport/category/brand XOR/model match/lifespan by threshold/date/attrs), view shape (`display_name`, legacy `type`), parent_item validation, ownership 404, activate swaps one active **per category**, archived not activatable, free limit counts non-retired rows only (archive frees a slot, renew net-zero, concurrent create, Pro lapse), archive, renew (same lineage, copy/override, fresh usage, renewals_this_year, spare stays inactive, guards), list view/sport/category filters, PATCH (nickname/brand/model/lifespan/parent/purchase), display_name chain |
 | `internal/modules/equipment/store_mem_test.go` | in-memory `store` fake with fixture catalog (shared by service/accrual/handler tests) |
 | `internal/modules/equipment/handler_test.go` | list envelope + `view/sport/category_id` filters, create 201 parses new contract, 402 `pro_required`, old-client body → 400, 404 foreign, PATCH legacy `name` alias + set-flags, delete 204, activate/reset 200, archive 200/409, renew empty body 201 + 409/400/404 mapping |
+| `internal/modules/equipment/winrate_test.go` | combo key (sorted, identity-based, custom names), win %, participant/recorder-only rows, no-gear/unknown-sport no-ops, dedupe, sport-scoped combo, delete removes row, `enough_data` at ≥5 (`MinWinRateSample`), combo survives same-brand renew but not a brand change, win-rate handler shapes |
+| `internal/modules/equipment/routes_test.go` | `Mount`: `win-rate`/`catalog` static paths beat `{id}`, archive/renew routed |
 | `internal/modules/equipment/catalog_test.go` | catalog tree nesting (category→brand→model), empty sports kept, sport filter + invalid sport 400, `GET /v1/equipment/catalog` single object vs all-sports array |
 | `internal/migrate/catalog_seed_test.go` | static check of `036_equipment_catalog.sql`: 16 categories, 34 brands (+hex), 167 models, every §2.1 brand×category pair covered with 2–4 models, RUBBER_FH/BH identical, legacy index kept, backfill after seed |
-| `internal/modules/score/service_test.go` (accruer) | CreateMatch/EndLiveMatch call UsageAccruer with seconds; skip nil/zero |
+| `internal/modules/score/service_test.go` (accruer + equipment sink) | CreateMatch/EndLiveMatch call UsageAccruer with seconds **and match sport**; skip nil/zero; `EquipmentMatchSink` fires on create/end (even without duration) and delete; nil sink and panicking sink never fail the write |
 
 ## Shared happy-path cases
 
@@ -138,11 +140,12 @@ make test
 | FEED-04 | done | comment 1–280; SSE + 60s push rate-limit + 10/day cap (resets next day); delete by comment/activity author; others 403 |
 | FEED-05 | done | visibility 403 on /v1/feed/{id}/* when caller is not actor/friend |
 | FEED-06 | done | OnMatchDeleted removes the activity (cascades reactions/comments) |
-| EQUIP-01 | done | duration accrues onto active STRING+SHOES for all authenticated users; inactive/nil/zero no-op |
-| EQUIP-02 | done | threshold push once + notified_at; reset / raised lifespan refires; sweep idempotent |
+| EQUIP-01 | done | duration accrues onto the recorder's active, non-retired items of **every category of the match's sport** in one match (Tennis: racket+string+shoes+overgrip); other sports / inactive / retired / foreign / nil / zero no-op |
+| EQUIP-02 | done | threshold push once + notified_at (hours; HOURS_OR_DAYS also by calendar days from purchase_date ?? created_at); NONE never reminds; reset / raised lifespan refires; sweep idempotent |
 | EQUIP-03 | done | Free limit = **non-retired** rows (2): create 0→2 OK, 3rd 402, delete or **archive** re-enables, renew is net-zero, Pro lapse keeps items; Pro unlimited; transaction lock on create; list/CRUD/accrual open to all authenticated users |
 | EQUIP-04 | done | catalog seed (16 categories / 34 brands / 167 models, AC-8) verified statically + against Postgres 16 (counts, AC-22 backfill 0 unmigrated, idempotent re-run, old-binary INSERT gets `lineage_id`); `GET /v1/equipment/catalog` Bearer, sport filter, 400 on unknown sport |
 | EQUIP-05 | done | archive (retired_at, no replacement, 409 when repeated) and renew (supports_renew only, old row retired + new row same `lineage_id`, empty body copies brand/model/attributes/lifespans/parent, fresh usage, `renewals_this_year`, inherits active slot); activate/uq scoped per `category_id`; `GET /v1/me/equipment?view=active\|archive&sport&category_id`; `display_name` + legacy `type`; verified against Postgres 16 incl. legacy rows
+| EQUIP-06 | done | `EquipmentMatchSink`: recorder-who-played gets one `match_equipment_usage` row (combo_key, won) per finished match, none for non-participants / no gear; delete removes it; `GET /v1/me/equipment/win-rate` returns `enough_data=false` below 5 matches, else played/won/percent; restring with same brand/model keeps the combo; score hooks are best-effort (nil/panic safe); verified against Postgres 16 |
 
 ## Öncelik (2 haftalık)
 

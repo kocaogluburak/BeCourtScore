@@ -13,7 +13,7 @@ Also exposes player identity aggregates (career stats + head-to-head).
 | `handler.go` | Finished-match + stats handlers, DTOs, pagination |
 | `live_handler.go` | Live start/get/update/end/list/cancel/accept/decline |
 | `rematch_handler.go` / `rematch.go` / `rematch_repo.go` | Friend rematch challenges (pending inbox + accept prefill) |
-| `service.go` | History rules + live state machine + stats gates; `FriendChecker`; `UserLookup`; optional `PushSender` / `AchievementHook` / `ActivitySink` / `SeasonNotifier` / `UsageAccruer` |
+| `service.go` | History rules + live state machine + stats gates; `FriendChecker`; `UserLookup`; optional `PushSender` / `AchievementHook` / `ActivitySink` / `SeasonNotifier` / `UsageAccruer` (sport-scoped) / `EquipmentMatchSink` |
 | `stats.go` | Pure aggregation: W/L, set diff, form, rivals, H2H |
 | `wrapped.go` / `wrapped_handler.go` | Year-in-review: `GET /v1/me/wrapped` + public share token |
 | `wrapped_share.go` | `POST /v1/me/wrapped/share`, `GET /v1/public/wrapped/{token}` |

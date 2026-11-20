@@ -14,6 +14,7 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 		r.Get("/v1/equipment/catalog", h.catalog)
 		r.Get("/v1/me/equipment", h.list)
 		r.Post("/v1/me/equipment", h.create)
+		r.Get("/v1/me/equipment/win-rate", h.winRate) // static segment wins over {id}
 		r.Get("/v1/me/equipment/{id}", h.get)
 		r.Patch("/v1/me/equipment/{id}", h.update)
 		r.Delete("/v1/me/equipment/{id}", h.del)

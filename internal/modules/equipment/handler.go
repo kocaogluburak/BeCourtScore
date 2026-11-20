@@ -23,6 +23,7 @@ type svcFacade interface {
 	Archive(ctx context.Context, userID, id string) (Usage, error)
 	Renew(ctx context.Context, userID, id string, in RenewInput) (Usage, error)
 	GetCatalog(ctx context.Context, sport string) ([]CatalogView, error)
+	WinRate(ctx context.Context, userID, sport string) (WinRate, error)
 }
 
 type handler struct {
@@ -237,4 +238,15 @@ func (h *handler) catalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, views)
+}
+
+// winRate serves GET /v1/me/equipment/win-rate?sport=.
+func (h *handler) winRate(w http.ResponseWriter, r *http.Request) {
+	userID, _ := authkit.UserIDFromCtx(r.Context())
+	out, err := h.svc.WinRate(r.Context(), userID, r.URL.Query().Get("sport"))
+	if err != nil {
+		writeErr(w, err, "failed to compute win rate")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }

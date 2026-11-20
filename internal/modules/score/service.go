@@ -72,9 +72,17 @@ type SeasonNotifier interface {
 // UsageAccruer adds match duration onto the recorder's active equipment.
 // Implemented by equipment.Service; wired in cmd/api/main.go. Nil-safe.
 type UsageAccruer interface {
-	// AccrueMatchDuration adds seconds onto the user's active equipment (all types).
-	// Best-effort: never fails the match write.
-	AccrueMatchDuration(ctx context.Context, userID string, seconds int)
+	// AccrueMatchDuration adds seconds onto the user's active, non-retired equipment of
+	// that sport (every category at once). Best-effort: never fails the match write.
+	AccrueMatchDuration(ctx context.Context, userID, sport string, seconds int)
+}
+
+// EquipmentMatchSink records which gear combination the recorder used in a finished
+// match (forward-only win-rate) and drops that row when the match is deleted.
+// Implemented by equipment.Service; same best-effort pattern as ActivitySink. Nil-safe.
+type EquipmentMatchSink interface {
+	OnMatchRecorded(ctx context.Context, m Match)
+	OnMatchDeleted(ctx context.Context, matchID string)
 }
 
 // store is the persistence surface used by Service.
@@ -127,6 +135,7 @@ type Service struct {
 	activity        ActivitySink
 	seasons         SeasonNotifier
 	accrue          UsageAccruer
+	equipMatch      EquipmentMatchSink
 	gate            entitlement.Gate
 	publicWebOrigin string
 }
@@ -147,6 +156,8 @@ func (s *Service) SetActivitySink(a ActivitySink) { s.activity = a }
 func (s *Service) SetSeasonNotifier(n SeasonNotifier) { s.seasons = n }
 
 func (s *Service) SetAccruer(a UsageAccruer) { s.accrue = a }
+
+func (s *Service) SetEquipmentMatchSink(e EquipmentMatchSink) { s.equipMatch = e }
 
 func (s *Service) SetPublicWebOrigin(origin string) {
 	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
@@ -207,7 +218,8 @@ func (s *Service) CreateMatch(ctx context.Context, userID string, in CreateInput
 	s.notifyPulse(ctx, m)
 	s.notifyActivity(ctx, m)
 	s.notifySeason(ctx, m)
-	s.notifyAccrual(ctx, userID, m.DurationSeconds)
+	s.notifyAccrual(ctx, userID, m.Sport, m.DurationSeconds)
+	s.notifyEquipmentMatch(ctx, m)
 	return m, nil
 }
 
@@ -347,6 +359,7 @@ func (s *Service) DeleteMatch(ctx context.Context, userID, matchID string) error
 		return err
 	}
 	s.notifyActivityDeleted(ctx, matchID)
+	s.notifyEquipmentDeleted(ctx, matchID)
 	s.notifyPulse(ctx, m)
 	return nil
 }
@@ -718,7 +731,8 @@ func (s *Service) EndLiveMatch(ctx context.Context, userID, id string, in LiveEn
 	s.notifyPulse(ctx, hist)
 	s.notifyActivity(ctx, hist)
 	s.notifySeason(ctx, hist)
-	s.notifyAccrual(ctx, userID, hist.DurationSeconds)
+	s.notifyAccrual(ctx, userID, hist.Sport, hist.DurationSeconds)
+	s.notifyEquipmentMatch(ctx, hist)
 	historyID = &hist.ID
 	ended, err := s.repo.endLive(ctx, id, in, historyID)
 	if err != nil {
@@ -1057,7 +1071,7 @@ func derefID(id *string) string {
 	return *id
 }
 
-func (s *Service) notifyAccrual(ctx context.Context, userID string, seconds *int) {
+func (s *Service) notifyAccrual(ctx context.Context, userID, sport string, seconds *int) {
 	if s.accrue == nil || seconds == nil || *seconds <= 0 {
 		return
 	}
@@ -1066,7 +1080,32 @@ func (s *Service) notifyAccrual(ctx context.Context, userID string, seconds *int
 			slog.Warn("score: accrue hook panic", "err", rec)
 		}
 	}()
-	s.accrue.AccrueMatchDuration(ctx, userID, *seconds)
+	s.accrue.AccrueMatchDuration(ctx, userID, sport, *seconds)
+}
+
+// notifyEquipmentMatch is best-effort: the equipment hook must never fail the match write.
+func (s *Service) notifyEquipmentMatch(ctx context.Context, m Match) {
+	if s.equipMatch == nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("score: equipment match hook panic", "err", rec)
+		}
+	}()
+	s.equipMatch.OnMatchRecorded(ctx, m)
+}
+
+func (s *Service) notifyEquipmentDeleted(ctx context.Context, matchID string) {
+	if s.equipMatch == nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("score: equipment delete hook panic", "err", rec)
+		}
+	}()
+	s.equipMatch.OnMatchDeleted(ctx, matchID)
 }
 
 func (s *Service) notifyActivityDeleted(ctx context.Context, matchID string) {
