@@ -383,3 +383,53 @@ func (r *repo) loadPulseFriends(ctx context.Context, userID string, start, end t
 	}
 	return out, rows.Err()
 }
+
+const pulseSocialReceivedSQL = `
+	WITH friends AS (` + friendIDsSQL + `)
+	SELECT COUNT(*)::int FROM (
+		SELECT 1 FROM activity_reactions r
+		JOIN activities a ON a.id = r.activity_id
+		WHERE a.actor_id = $1
+		  AND r.user_id IN (SELECT fid FROM friends)
+		  AND r.user_id <> $1
+		  AND r.created_at >= $2 AND r.created_at < $3
+		UNION ALL
+		SELECT 1 FROM activity_comments c
+		JOIN activities a ON a.id = c.activity_id
+		WHERE a.actor_id = $1
+		  AND c.user_id IN (SELECT fid FROM friends)
+		  AND c.user_id <> $1
+		  AND c.created_at >= $2 AND c.created_at < $3
+	) x`
+
+const pulseSocialGivenSQL = `
+	WITH friends AS (` + friendIDsSQL + `)
+	SELECT COUNT(*)::int FROM (
+		SELECT 1 FROM activity_reactions r
+		JOIN activities a ON a.id = r.activity_id
+		JOIN users u ON u.id = a.actor_id
+		WHERE r.user_id = $1
+		  AND a.actor_id IN (SELECT fid FROM friends)
+		  AND a.actor_id <> $1
+		  AND NOT u.feed_opt_out
+		  AND r.created_at >= $2 AND r.created_at < $3
+		UNION ALL
+		SELECT 1 FROM activity_comments c
+		JOIN activities a ON a.id = c.activity_id
+		JOIN users u ON u.id = a.actor_id
+		WHERE c.user_id = $1
+		  AND a.actor_id IN (SELECT fid FROM friends)
+		  AND a.actor_id <> $1
+		  AND NOT u.feed_opt_out
+		  AND c.created_at >= $2 AND c.created_at < $3
+	) x`
+
+func (r *repo) countWeeklySocial(ctx context.Context, userID string, start, end time.Time) (received, given int, err error) {
+	if err := r.pool.QueryRow(ctx, pulseSocialReceivedSQL, userID, start, end).Scan(&received); err != nil {
+		return 0, 0, fmt.Errorf("pulse social received: %w", err)
+	}
+	if err := r.pool.QueryRow(ctx, pulseSocialGivenSQL, userID, start, end).Scan(&given); err != nil {
+		return 0, 0, fmt.Errorf("pulse social given: %w", err)
+	}
+	return received, given, nil
+}

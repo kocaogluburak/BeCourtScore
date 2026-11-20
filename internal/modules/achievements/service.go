@@ -55,6 +55,7 @@ type PulseAudience interface {
 type PulseBoard interface {
 	WeeklyRank(ctx context.Context, userID string, start, end time.Time) (*PulseRank, error)
 	WeeklyFriends(ctx context.Context, userID string, start, end time.Time) (*PulseFriends, error)
+	WeeklySocial(ctx context.Context, userID string, start, end time.Time) (*PulseSocial, error)
 }
 
 // Service evaluates badges/goals/streaks and serves the HTTP surface.
@@ -315,6 +316,13 @@ func (s *Service) GetPulse(ctx context.Context, userID string) (PulseCard, error
 			return PulseCard{}, err
 		}
 		card.Friends = friends
+		social, err := s.board.WeeklySocial(ctx, userID, start, end)
+		if err != nil {
+			return PulseCard{}, err
+		}
+		if social != nil && social.Received+social.Given >= 1 {
+			card.Social = social
+		}
 	}
 	return card, nil
 }
@@ -390,7 +398,10 @@ func pulseHasNews(card PulseCard) bool {
 	if card.Rank != nil {
 		return true
 	}
-	return card.Friends != nil
+	if card.Friends != nil {
+		return true
+	}
+	return card.Social != nil && card.Social.Received+card.Social.Given >= 1
 }
 
 // SendWeeklyPulses sends at most one weekly.pulse per user per ISO week.
@@ -469,6 +480,11 @@ func (s *Service) NotifyNightPulse(ctx context.Context, playerIDs []string, grou
 		ids = expanded
 	}
 	s.publishPulse(ids)
+}
+
+// NotifyFeedPulse publishes pulse.updated after a feed interaction.
+func (s *Service) NotifyFeedPulse(ctx context.Context, userIDs []string) {
+	s.publishPulse(userIDs)
 }
 
 func (s *Service) publishPulse(ids []string) {

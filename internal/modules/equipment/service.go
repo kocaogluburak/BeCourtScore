@@ -16,6 +16,8 @@ const (
 	TypeString = "STRING"
 	TypeShoes  = "SHOES"
 	maxNameLen = 80
+	// Free players may own at most this many equipment rows; Pro is unlimited.
+	freeEquipmentLimit = 2
 )
 
 // PushSender delivers OS push notifications to a user (FCM). Best-effort.
@@ -85,11 +87,11 @@ func NewService(pool *pgxpool.Pool, push PushSender) *Service {
 
 func (s *Service) SetGate(g entitlement.Gate) { s.gate = g }
 
-func (s *Service) requirePro(ctx context.Context, userID string) error {
+func (s *Service) isPro(ctx context.Context, userID string) (bool, error) {
 	if s.gate == nil {
-		return nil
+		return true, nil
 	}
-	return s.gate.AllowEquipment(ctx, userID)
+	return s.gate.IsPro(ctx, userID)
 }
 
 func validType(t string) bool {
@@ -170,7 +172,8 @@ func UsageFrom(it Item) Usage {
 }
 
 func (s *Service) Create(ctx context.Context, userID string, in CreateInput) (Usage, error) {
-	if err := s.requirePro(ctx, userID); err != nil {
+	pro, err := s.isPro(ctx, userID)
+	if err != nil {
 		return Usage{}, err
 	}
 	typ := strings.ToUpper(strings.TrimSpace(in.Type))
@@ -189,11 +192,7 @@ func (s *Service) Create(ctx context.Context, userID string, in CreateInput) (Us
 		return Usage{}, err
 	}
 	in.Type, in.Name, in.PurchaseDate = typ, name, purchase
-	has, err := s.repo.hasActive(ctx, userID, typ)
-	if err != nil {
-		return Usage{}, err
-	}
-	it, err := s.repo.insert(ctx, userID, in, !has)
+	it, err := s.repo.insertCreate(ctx, userID, in, pro)
 	if err != nil {
 		return Usage{}, err
 	}
@@ -201,9 +200,6 @@ func (s *Service) Create(ctx context.Context, userID string, in CreateInput) (Us
 }
 
 func (s *Service) List(ctx context.Context, userID string, limit, offset int) ([]Usage, int64, error) {
-	if err := s.requirePro(ctx, userID); err != nil {
-		return nil, 0, err
-	}
 	items, total, err := s.repo.listForUser(ctx, userID, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -216,9 +212,6 @@ func (s *Service) List(ctx context.Context, userID string, limit, offset int) ([
 }
 
 func (s *Service) Get(ctx context.Context, userID, id string) (Usage, error) {
-	if err := s.requirePro(ctx, userID); err != nil {
-		return Usage{}, err
-	}
 	it, err := s.repo.getByID(ctx, id, userID)
 	if err != nil {
 		return Usage{}, err
@@ -227,9 +220,6 @@ func (s *Service) Get(ctx context.Context, userID, id string) (Usage, error) {
 }
 
 func (s *Service) Update(ctx context.Context, userID, id string, in UpdateInput) (Usage, error) {
-	if err := s.requirePro(ctx, userID); err != nil {
-		return Usage{}, err
-	}
 	existing, err := s.repo.getByID(ctx, id, userID)
 	if err != nil {
 		return Usage{}, err
@@ -267,16 +257,10 @@ func (s *Service) Update(ctx context.Context, userID, id string, in UpdateInput)
 }
 
 func (s *Service) Delete(ctx context.Context, userID, id string) error {
-	if err := s.requirePro(ctx, userID); err != nil {
-		return err
-	}
 	return s.repo.delete(ctx, id, userID)
 }
 
 func (s *Service) Activate(ctx context.Context, userID, id string) (Usage, error) {
-	if err := s.requirePro(ctx, userID); err != nil {
-		return Usage{}, err
-	}
 	it, err := s.repo.activate(ctx, id, userID)
 	if err != nil {
 		return Usage{}, err
@@ -285,9 +269,6 @@ func (s *Service) Activate(ctx context.Context, userID, id string) (Usage, error
 }
 
 func (s *Service) Reset(ctx context.Context, userID, id string) (Usage, error) {
-	if err := s.requirePro(ctx, userID); err != nil {
-		return Usage{}, err
-	}
 	it, err := s.repo.reset(ctx, id, userID)
 	if err != nil {
 		return Usage{}, err
@@ -303,9 +284,6 @@ func (s *Service) AccrueMatchDuration(ctx context.Context, userID string, second
 		}
 	}()
 	if seconds <= 0 || userID == "" {
-		return
-	}
-	if err := s.requirePro(ctx, userID); err != nil {
 		return
 	}
 	items, err := s.repo.accrueActive(ctx, userID, seconds)
@@ -326,9 +304,6 @@ func (s *Service) SweepReminders(ctx context.Context) error {
 		return err
 	}
 	for _, it := range items {
-		if err := s.requirePro(ctx, it.UserID); err != nil {
-			continue
-		}
 		s.maybeRemind(ctx, it)
 	}
 	return nil

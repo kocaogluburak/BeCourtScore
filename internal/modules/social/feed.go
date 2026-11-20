@@ -149,11 +149,17 @@ type feedStore interface {
 }
 
 // FeedService owns the friend activity feed.
+// FeedPulseHook notifies users to reload the weekly pulse after feed interaction.
+type FeedPulseHook interface {
+	NotifyFeedPulse(ctx context.Context, userIDs []string)
+}
+
 type FeedService struct {
-	repo feedStore
-	hub  *sse.Hub
-	push PushSender
-	now  func() time.Time
+	repo  feedStore
+	hub   *sse.Hub
+	push  PushSender
+	pulse FeedPulseHook
+	now   func() time.Time
 
 	mu               sync.Mutex
 	lastCommentPush  map[string]time.Time
@@ -176,6 +182,19 @@ func NewFeedService(pool *pgxpool.Pool, hub *sse.Hub, push PushSender) *FeedServ
 		lastCommentPost: map[string]time.Time{},
 		commentPostDay:  map[string]commentDayCount{},
 	}
+}
+
+func (s *FeedService) SetPulseHook(h FeedPulseHook) { s.pulse = h }
+
+func (s *FeedService) notifyPulse(ctx context.Context, callerID, actorID string) {
+	if s.pulse == nil {
+		return
+	}
+	ids := assembleAudience([]string{callerID, actorID})
+	if len(ids) == 0 {
+		return
+	}
+	s.pulse.NotifyFeedPulse(ctx, ids)
 }
 
 // OnMatchRecorded creates one activity and fans SSE to the actor's friends.
@@ -262,6 +281,7 @@ func (s *FeedService) AddReaction(ctx context.Context, callerID, activityID, typ
 			fmt.Sprintf("%s sent you congrats", userDisplayLabel(user)),
 			map[string]string{"type": "feed.reaction_added", "activity_id": activityID})
 	}
+	s.notifyPulse(ctx, callerID, act.ActorID)
 	return ReactionResult{ActivityID: activityID, ReactionCount: count, ViewerHasKudos: true}, nil
 }
 
@@ -275,6 +295,9 @@ func (s *FeedService) RemoveReaction(ctx context.Context, callerID, activityID s
 		return err
 	}
 	_, err = s.repo.removeReaction(ctx, activityID, callerID, reactionKudos)
+	if err == nil {
+		s.notifyPulse(ctx, callerID, act.ActorID)
+	}
 	return err
 }
 
@@ -338,6 +361,7 @@ func (s *FeedService) AddComment(ctx context.Context, callerID, activityID, body
 	if callerID != act.ActorID {
 		s.pushComment(ctx, act.ActorID, activityID, dto.User)
 	}
+	s.notifyPulse(ctx, callerID, act.ActorID)
 	return dto, nil
 }
 
@@ -360,7 +384,11 @@ func (s *FeedService) DeleteComment(ctx context.Context, callerID, activityID, c
 	if callerID != c.UserID && callerID != act.ActorID {
 		return ErrForbidden
 	}
-	return s.repo.deleteComment(ctx, commentID)
+	if err := s.repo.deleteComment(ctx, commentID); err != nil {
+		return err
+	}
+	s.notifyPulse(ctx, callerID, act.ActorID)
+	return nil
 }
 
 // GetSettings returns the caller's feed_opt_out flag.

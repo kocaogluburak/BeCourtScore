@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"time"
 
+	"courtscore/internal/platform/entitlement"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type store interface {
 	insert(ctx context.Context, userID string, in CreateInput, isActive bool) (Item, error)
+	insertCreate(ctx context.Context, userID string, in CreateInput, isPro bool) (Item, error)
 	listForUser(ctx context.Context, userID string, limit, offset int) ([]Item, int64, error)
 	getByID(ctx context.Context, id, userID string) (Item, error)
 	update(ctx context.Context, id, userID string, in UpdateInput, clearNotified bool) (Item, error)
@@ -42,6 +44,45 @@ func scanItem(row pgx.Row) (Item, error) {
 	if purchase != nil {
 		s := purchase.Format("2006-01-02")
 		it.PurchaseDate = &s
+	}
+	return it, nil
+}
+
+func (r *repo) insertCreate(ctx context.Context, userID string, in CreateInput, isPro bool) (Item, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Item{}, fmt.Errorf("create begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1::text))`, userID); err != nil {
+		return Item{}, fmt.Errorf("create lock: %w", err)
+	}
+	var count int64
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM equipment WHERE user_id = $1`, userID).Scan(&count); err != nil {
+		return Item{}, fmt.Errorf("create count: %w", err)
+	}
+	if !isPro && count >= freeEquipmentLimit {
+		return Item{}, entitlement.ErrProRequired
+	}
+	var hasActive bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM equipment WHERE user_id = $1 AND type = $2 AND is_active)`,
+		userID, in.Type,
+	).Scan(&hasActive); err != nil {
+		return Item{}, fmt.Errorf("create has active: %w", err)
+	}
+	it, err := scanItem(tx.QueryRow(ctx, `
+		INSERT INTO equipment (user_id, type, name, purchase_date, lifespan_hours, is_active)
+		VALUES ($1, $2, $3, $4::date, $5, $6)
+		RETURNING `+itemCols,
+		userID, in.Type, in.Name, in.PurchaseDate, in.LifespanHours, !hasActive,
+	))
+	if err != nil {
+		return Item{}, fmt.Errorf("insert equipment: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Item{}, fmt.Errorf("create commit: %w", err)
 	}
 	return it, nil
 }

@@ -1029,13 +1029,49 @@ func TestGetHeadToHead_SelfRejectedAndEmptyOK(t *testing.T) {
 	}
 }
 
+func TestGetHeadToHead_UsesAllowHeadToHeadGate(t *testing.T) {
+	me, opp := "u1", "u2"
+	store := &fakeScoreStore{
+		matches: []Match{{
+			Sport: "TENNIS", PlayerAUserID: &me, PlayerBUserID: &opp,
+			PlayerAName: "Me", PlayerBName: "Opp", SetsA: 2, SetsB: 0, WinnerSide: "A",
+			PlayedAt: time.Now(),
+		}},
+	}
+	svc := newScoreService(store, &fakeFriends{ok: true}, nil)
+	// Simulates 10th free cloud match: AllowStats/AllowCloudSync locked (err=ErrProRequired),
+	// while AllowHeadToHead remains open (hasH2H=true, h2hErr=nil).
+	svc.SetGate(&fakeGate{err: entitlement.ErrProRequired, hasH2H: true, h2hErr: nil})
+	if _, err := svc.GetUserStats(context.Background(), me, me, ""); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("stats should remain locked at 10: %v", err)
+	}
+	got, err := svc.GetHeadToHead(context.Background(), me, opp, "")
+	if err != nil || got.Wins != 1 || got.Losses != 0 {
+		t.Fatalf("10th match h2h should succeed with new match: got=%+v err=%v", got, err)
+	}
+
+	// Simulates >10 matches without Pro: AllowHeadToHead returns ErrProRequired.
+	svc.SetGate(&fakeGate{err: entitlement.ErrProRequired, hasH2H: true, h2hErr: entitlement.ErrProRequired})
+	if _, err := svc.GetHeadToHead(context.Background(), me, opp, ""); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("11+ without Pro should lock h2h: %v", err)
+	}
+}
+
 type fakeGate struct {
-	err   error
-	isPro bool
+	err    error
+	h2hErr error
+	isPro  bool
+	hasH2H bool
 }
 
 func (g *fakeGate) AllowCloudSync(context.Context, string) error { return g.err }
 func (g *fakeGate) AllowStats(context.Context, string) error     { return g.err }
+func (g *fakeGate) AllowHeadToHead(context.Context, string) error {
+	if g.hasH2H {
+		return g.h2hErr
+	}
+	return g.err
+}
 func (g *fakeGate) AllowAdvancedStats(context.Context, string) error {
 	if g.isPro {
 		return nil

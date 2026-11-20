@@ -36,6 +36,7 @@ type Loader interface {
 type Gate interface {
 	AllowCloudSync(ctx context.Context, userID string) error
 	AllowStats(ctx context.Context, userID string) error
+	AllowHeadToHead(ctx context.Context, userID string) error
 	// AllowAdvancedStats is a strict Pro check (IsPro only) for point-by-point
 	// derived counts. Unlike AllowStats it does not honor the free match quota.
 	AllowAdvancedStats(ctx context.Context, userID string) error
@@ -53,4 +54,10 @@ type Gate interface {
 // WithinFreeQuota is true when the user is Pro or still under the free match cap.
 func WithinFreeQuota(s Snapshot) bool {
 	return s.IsPro || s.FinishedMatchCount < FreeMatchLimit
+}
+
+// WithinFreeH2HQuota is true when the user is Pro or within the free cloud match
+// cap inclusive (so the 10th free cloud match can still read head-to-head right after saving).
+func WithinFreeH2HQuota(s Snapshot) bool {
+	return s.IsPro || s.FinishedMatchCount <= FreeMatchLimit
 }

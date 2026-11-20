@@ -22,3 +22,18 @@ func TestWithinFreeQuota(t *testing.T) {
 		t.Fatal("Pro should always be within quota")
 	}
 }
+
+func TestWithinFreeH2HQuota(t *testing.T) {
+	if !WithinFreeH2HQuota(Snapshot{FinishedMatchCount: 0}) {
+		t.Fatal("0 matches should allow H2H")
+	}
+	if !WithinFreeH2HQuota(Snapshot{FinishedMatchCount: 10}) {
+		t.Fatal("10th free cloud match should still allow H2H")
+	}
+	if WithinFreeH2HQuota(Snapshot{FinishedMatchCount: 11}) {
+		t.Fatal("11 matches without Pro should lock H2H")
+	}
+	if !WithinFreeH2HQuota(Snapshot{IsPro: true, FinishedMatchCount: 99}) {
+		t.Fatal("Pro should always allow H2H")
+	}
+}

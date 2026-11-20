@@ -101,6 +101,12 @@ type PulseFriends struct {
 	Others int      `json:"others"`
 }
 
+// PulseSocial counts kudos and comments between accepted friends this week.
+type PulseSocial struct {
+	Received int `json:"received"`
+	Given    int `json:"given"`
+}
+
 // PulseCard is GET /v1/me/pulse. Empty parts are null. days_left is always 0..6.
 type PulseCard struct {
 	WeekStart time.Time     `json:"week_start"`
@@ -109,4 +115,5 @@ type PulseCard struct {
 	Goal      *PulseGoal    `json:"goal"`
 	Rank      *PulseRank    `json:"rank"`
 	Friends   *PulseFriends `json:"friends"`
+	Social    *PulseSocial  `json:"social,omitempty"`
 }

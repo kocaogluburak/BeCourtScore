@@ -42,8 +42,15 @@ type pulseStore interface {
 	loadPulseMatches(ctx context.Context, memberIDs, sports []string, start, end time.Time) ([]ladderMatch, error)
 	loadPulseNights(ctx context.Context, groupIDs []string, start, end time.Time) ([]socialNight, error)
 	loadPulseFriends(ctx context.Context, userID string, start, end time.Time) ([]pulseFriend, error)
+	countWeeklySocial(ctx context.Context, userID string, start, end time.Time) (received, given int, err error)
 	matchAudience(ctx context.Context, participantIDs []string) ([]string, error)
 	nightAudience(ctx context.Context, playerIDs []string, groupID string) ([]string, error)
+}
+
+// PulseSocialCounts is the weekly friend interaction tally for the pulse card.
+type PulseSocialCounts struct {
+	Received int
+	Given    int
 }
 
 // MatchAudience is the one set that should refresh after a finished match:
@@ -115,6 +122,21 @@ func (s *Service) WeeklyFriends(ctx context.Context, userID string, start, end t
 		return nil, err
 	}
 	return selectPulseFriends(userID, rows), nil
+}
+
+// WeeklySocialInteraction counts kudos and comments with accepted friends this week.
+func (s *Service) WeeklySocialInteraction(ctx context.Context, userID string, start, end time.Time) (*PulseSocialCounts, error) {
+	if s.pulse == nil {
+		return nil, nil
+	}
+	received, given, err := s.pulse.countWeeklySocial(ctx, userID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	if received+given == 0 {
+		return nil, nil
+	}
+	return &PulseSocialCounts{Received: received, Given: given}, nil
 }
 
 func pulseQueryKeys(groups []pulseGroup) (memberIDs, sports, groupIDs []string) {

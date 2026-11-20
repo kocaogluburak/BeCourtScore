@@ -105,6 +105,17 @@ func (s *Service) AllowStats(ctx context.Context, userID string) error {
 	return s.requireQuota(ctx, userID)
 }
 
+func (s *Service) AllowHeadToHead(ctx context.Context, userID string) error {
+	snap, err := s.Load(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if entitlement.WithinFreeH2HQuota(snap) {
+		return nil
+	}
+	return entitlement.ErrProRequired
+}
+
 func (s *Service) AllowAdvancedStats(ctx context.Context, userID string) error {
 	return s.requirePro(ctx, userID)
 }

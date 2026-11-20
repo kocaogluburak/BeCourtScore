@@ -16,9 +16,11 @@ type PointEvent struct {
 	GamesB    int    `json:"gb"`
 	ScoreA    int    `json:"pa"`
 	ScoreB    int    `json:"pb"`
-	Server    string `json:"sv,omitempty"`
-	TieBreak  bool   `json:"tb,omitempty"`
-	Advantage bool   `json:"adv"`
+	Server      string `json:"sv,omitempty"`
+	TieBreak    bool   `json:"tb,omitempty"`
+	Advantage   bool   `json:"adv"`
+	PointsToWin int    `json:"ptw,omitempty"`
+	Rally       bool   `json:"rl,omitempty"`
 	// Outcome is optional point-end tag: "ace" | "df" | "winner" | "ue".
 	Outcome string `json:"o,omitempty"`
 	// OutcomeSide is who the outcome is attributed to: "A" | "B".
@@ -77,6 +79,9 @@ func capPointLog(in []PointEvent) []PointEvent {
 		if len(out) == maxPointLog {
 			break
 		}
+		if p.PointsToWin < 0 || p.PointsToWin > 99 {
+			p.PointsToWin = 0
+		}
 		sanitizeOutcome(&p)
 		out = append(out, p)
 	}
@@ -105,7 +110,7 @@ func Summarize(points []PointEvent, durationSeconds *int) MatchPointStats {
 		}
 		stats.TotalPoints++
 		tallyOutcome(&stats, p)
-		if p.Server == "" || p.TieBreak {
+		if !isTennisServeSlot(p.Server) || p.TieBreak {
 			continue
 		}
 		stats.HasServer = true
@@ -183,6 +188,10 @@ func tallyOutcome(stats *MatchPointStats, p PointEvent) {
 	default:
 		stats.TaggedPoints--
 	}
+}
+
+func isTennisServeSlot(sv string) bool {
+	return sv == "A1" || sv == "A2" || sv == "B1" || sv == "B2"
 }
 
 func isBreakPoint(serverScore, returnScore int, advantage bool) bool {

@@ -50,6 +50,67 @@ func TestSummarize_NoServerHidesServeRows(t *testing.T) {
 	}
 }
 
+func TestSummarize_PickleballSideServerIgnoredForTennisServeStats(t *testing.T) {
+	stats := Summarize([]PointEvent{
+		{Side: "A", ScoreA: 10, ScoreB: 8, Server: "A", PointsToWin: 11},
+		{Side: "B", ScoreA: 10, ScoreB: 9, Server: "B", PointsToWin: 11, Rally: true},
+	}, nil)
+	if stats.HasServer || stats.ServePlayedA != 0 || stats.ServePlayedB != 0 || stats.BreakFacedA != 0 || stats.BreakFacedB != 0 {
+		t.Fatalf("pickleball A/B server leaked into tennis serve stats: %+v", stats)
+	}
+	if stats.TotalPoints != 2 || stats.PointsA != 1 || stats.PointsB != 1 {
+		t.Fatalf("points=%+v", stats)
+	}
+}
+
+func TestPointEventJSON_PointsToWinAndRallyRoundTripAndLegacyCompat(t *testing.T) {
+	// Legacy JSON without ptw/rl decodes cleanly with zero defaults
+	var legacy PointEvent
+	if err := json.Unmarshal([]byte(`{"s":"A","t":10,"pa":3,"pb":2,"adv":true}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.PointsToWin != 0 || legacy.Rally {
+		t.Fatalf("legacy defaults: %+v", legacy)
+	}
+	rawLegacy, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(rawLegacy, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["ptw"]; ok {
+		t.Fatalf("zero ptw should be omitted: %s", rawLegacy)
+	}
+	if _, ok := m["rl"]; ok {
+		t.Fatalf("false rl should be omitted: %s", rawLegacy)
+	}
+
+	// Direct-point event with ptw and rl round-trips and capPointLog clamps out-of-range ptw
+	direct := PointEvent{Side: "B", AtMs: 50, ScoreA: 14, ScoreB: 13, Server: "B", PointsToWin: 15, Rally: true}
+	rawDirect, err := json.Marshal(direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip PointEvent
+	if err := json.Unmarshal(rawDirect, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.PointsToWin != 15 || !roundTrip.Rally || roundTrip.Server != "B" {
+		t.Fatalf("round-trip failed: %+v", roundTrip)
+	}
+
+	capped := capPointLog([]PointEvent{
+		{Side: "A", PointsToWin: 21, Rally: true},
+		{Side: "B", PointsToWin: -5},
+		{Side: "A", PointsToWin: 150},
+	})
+	if len(capped) != 3 || capped[0].PointsToWin != 21 || !capped[0].Rally || capped[1].PointsToWin != 0 || capped[2].PointsToWin != 0 {
+		t.Fatalf("capPointLog ptw sanitize failed: %+v", capped)
+	}
+}
+
 func TestSummarize_EmptyLog(t *testing.T) {
 	stats := Summarize(nil, nil)
 	if stats.TotalPoints != 0 || stats.HasServer || stats.DurationSeconds != 0 {

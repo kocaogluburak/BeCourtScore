@@ -13,6 +13,7 @@ import (
 type fakeBoard struct {
 	rank    *PulseRank
 	friends *PulseFriends
+	social  *PulseSocial
 }
 
 func (f *fakeBoard) WeeklyRank(context.Context, string, time.Time, time.Time) (*PulseRank, error) {
@@ -20,6 +21,9 @@ func (f *fakeBoard) WeeklyRank(context.Context, string, time.Time, time.Time) (*
 }
 func (f *fakeBoard) WeeklyFriends(context.Context, string, time.Time, time.Time) (*PulseFriends, error) {
 	return f.friends, nil
+}
+func (f *fakeBoard) WeeklySocial(context.Context, string, time.Time, time.Time) (*PulseSocial, error) {
+	return f.social, nil
 }
 
 func TestPulseDaysLeft_MondaySixSundayZero(t *testing.T) {
@@ -179,5 +183,25 @@ func TestGetPulse_PassesRankAndFriends(t *testing.T) {
 	}
 	if card.Goal != nil {
 		t.Fatal("default target 0 should hide the goal")
+	}
+}
+
+func TestGetPulse_SocialOmitemptyAndHasNews(t *testing.T) {
+	svc := newTestService(nil, nil)
+	svc.SetPulseBoard(&fakeBoard{social: &PulseSocial{Received: 2, Given: 0}})
+	card, err := svc.GetPulse(context.Background(), "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Social == nil || card.Social.Received != 2 || card.Social.Given != 0 {
+		t.Fatalf("social=%+v", card.Social)
+	}
+	if !pulseHasNews(card) {
+		t.Fatal("social alone should be news")
+	}
+	svc.SetPulseBoard(&fakeBoard{social: &PulseSocial{Received: 0, Given: 0}})
+	card, err = svc.GetPulse(context.Background(), "u1")
+	if err != nil || card.Social != nil {
+		t.Fatalf("zero social=%+v err=%v", card.Social, err)
 	}
 }

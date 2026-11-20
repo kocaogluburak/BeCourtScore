@@ -38,9 +38,9 @@ make test
 | `internal/modules/invite/service_test.go` | URL-safe code, click increment, RecordSignup attribution, invalid code noop |
 | `internal/modules/score/live_handler_test.go` | live match start/get/update/end/list/cancel/accept/decline + conflict; open-list SQL uses jsonb_exists (not `?`) |
 | `internal/modules/score/format_test.go` | set_rule / final_set defaults and unknown values |
-| `internal/modules/score/pointlog_test.go` | duration, serve game, break conversion, golden break, old match omits point_log, ace/DF/winner/UE tallies, unknown tags ignored, serve/break unaffected, cap sanitizes outcomes |
+| `internal/modules/score/pointlog_test.go` | duration, serve game, break conversion, golden break, old match omits point_log, ace/DF/winner/UE tallies, unknown tags ignored, serve/break unaffected, cap sanitizes outcomes + ptw bounds, ptw/rl JSON round-trip + legacy compat, pickleball A/B serve slot guard |
 | `internal/modules/score/fitness_test.go` | cap/clamp HR/kcal samples; drop invalid source |
-| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, guest opponent is not invited, duplicate open 409, accept/decline, opponent cancel IN_PROGRESS, stale 24h expire, participant list, push invite, doubles invite body, non-friend partner sends nothing, stats/h2h gates, GetMatchPointStats Pro/forbidden/missing |
+| `internal/modules/score/service_test.go` | friendship gate, PENDING invite, guest IN_PROGRESS, guest opponent is not invited, duplicate open 409, accept/decline, opponent cancel IN_PROGRESS, stale 24h expire, participant list, push invite, doubles invite body, non-friend partner sends nothing, stats/h2h gates (incl. 10th free match AllowHeadToHead vs 11+ lock), GetMatchPointStats Pro/forbidden/missing |
 | `internal/modules/score/players_test.go` | side label, identical names kept, invitee list skips starter/blank/duplicate, nameless partner rejected |
 | `internal/modules/score/stats_test.go` | W/L form, rivals, sport filter, recorder-only ignored, H2H viewer perspective, doubles partner |
 | `internal/modules/score/social_career_test.go` | night placement, social H2H ignores ties, doubles replay skips a guest |
@@ -68,6 +68,8 @@ make test
 | `internal/modules/identity/apple_test.go` | Apple claims + email_verified bool/string + audience + JWK decode |
 | `internal/platform/authkit/jwt_test.go` | JWT issue/parse |
 | `internal/platform/authkit/middleware_test.go` | Bearer missing/invalid/valid → ctx |
+| `internal/platform/entitlement/entitlement_test.go` | `WithinFreeQuota` (`<10`) vs `WithinFreeH2HQuota` (`<=10`) |
+| `internal/modules/billing/service_test.go` | free under cap / 10+ lock / `AllowHeadToHead` open at 10 & locked at 11 / active / grace / expired / Google RTDN / Apple JWS |
 | `internal/platform/sse/hub_test.go` | subscribe/publish |
 | `internal/platform/httpx/pagination_test.go` | page clamp |
 | `internal/modules/equipment/accrual_test.go` | seconds→hours math; active-only accrual both types; nil/zero/lapsed no-op; threshold once + notified_at; refire after reset/lifespan raise; shoes vs string payload; sweep idempotent |
@@ -96,7 +98,7 @@ make test
 | HIST-01 | done | create match persists set_scores; invalid lines rejected |
 | SPORT-01 | done | 5 sports accepted (incl. PICKLEBALL) across matches/tournaments/groups; migration 023 widens sport CHECKs |
 | STATS-01 | done | user stats self/friend gate; form + rivals aggregation; recorder-only ignored; doubles partner counts, same-side is not a rival; guest W/L stays; doubles rating and social night summary attach |
-| H2H-01 | done | h2h self → 400; friend gate; empty 200; viewer-perspective W/L; social rounds stay off set diff |
+| H2H-01 | done | h2h self → 400; friend gate; empty 200; viewer-perspective W/L; social rounds stay off set diff; AllowHeadToHead stays open through 10th free cloud match (`count <= 10`) and locks at 11+ without Pro |
 | REMATCH-01 | done | create requires accepted friend (403 self/non-friend); duplicate pending → 409 |
 | REMATCH-02 | done | accept opponent-only + pending→accepted prefill DTO (no live_match_id) |
 | REMATCH-03 | done | reject/cancel transitions + wrong-state 409 + SSE/push fan-out |
@@ -126,15 +128,16 @@ make test
 | PULSE-01 | done | GET /v1/me/pulse goal/rank/friends/days_left; time_zone PATCH; no Pro gate; 401 |
 | PULSE-02 | done | local 18:00 last evening, pulse_sends once, web token gets loc keys, goal reminder still skips web |
 | PULSE-03 | done | pulse.updated after match create/delete and social night; nil hook keeps the match write |
+| PULSE-04 | done | Weekly social received/given on GET pulse (SELECT 1 UNION ALL verified against migration schema); pulseHasNews; feed reaction/comment/delete triggers pulse.updated |
 | FEED-01 | done | list shows only accepted friends' activities; non-friend & opted-out actors excluded |
 | FEED-02 | done | OnMatchRecorded creates 1 activity + SSE to friends; opted-out actor → no row, no fan-out |
 | FEED-03 | done | kudos idempotent; first kudos pushes author; self-kudos not pushed |
 | FEED-04 | done | comment 1–280; SSE + 60s push rate-limit + 10/day cap (resets next day); delete by comment/activity author; others 403 |
 | FEED-05 | done | visibility 403 on /v1/feed/{id}/* when caller is not actor/friend |
 | FEED-06 | done | OnMatchDeleted removes the activity (cascades reactions/comments) |
-| EQUIP-01 | done | duration accrues onto active STRING+SHOES; inactive/nil/zero/non-Pro no-op |
+| EQUIP-01 | done | duration accrues onto active STRING+SHOES for all authenticated users; inactive/nil/zero no-op |
 | EQUIP-02 | done | threshold push once + notified_at; reset / raised lifespan refires; sweep idempotent |
-| EQUIP-03 | done | CRUD + activate one-active-per-type + ownership 404; AllowEquipment IsPro-only 402 |
+| EQUIP-03 | done | Free user list/CRUD/accrual open; create 0→2 OK, 3rd 402, delete<2 re-enables, Pro lapse keeps items; Pro unlimited; transaction lock on create |
 
 ## Öncelik (2 haftalık)
 

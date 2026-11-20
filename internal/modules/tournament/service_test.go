@@ -150,6 +150,7 @@ type fakeTourGate struct {
 
 func (g *fakeTourGate) AllowCloudSync(context.Context, string) error            { return nil }
 func (g *fakeTourGate) AllowStats(context.Context, string) error                { return nil }
+func (g *fakeTourGate) AllowHeadToHead(context.Context, string) error           { return nil }
 func (g *fakeTourGate) AllowAdvancedStats(context.Context, string) error        { return nil }
 func (g *fakeTourGate) AllowPublicLive(context.Context, string) error           { return nil }
 func (g *fakeTourGate) AllowLargeTournament(context.Context, string, int) error { return g.err }

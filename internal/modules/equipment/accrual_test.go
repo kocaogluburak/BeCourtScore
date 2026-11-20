@@ -2,6 +2,7 @@ package equipment
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,26 +63,29 @@ func TestAccrue_ActiveOnlyBothTypes(t *testing.T) {
 	}
 }
 
-func TestAccrue_IgnoresNilZeroNegativeAndLapsed(t *testing.T) {
+func TestAccrue_IgnoresNilZeroNegative(t *testing.T) {
 	store := newMemStore()
-	svc := &Service{repo: store, gate: denyEquipGate{}}
+	svc := &Service{repo: store}
 	ctx := context.Background()
 	it, _ := store.insert(ctx, "u1", CreateInput{Type: TypeString, Name: "Luxilon", LifespanHours: 25}, true)
 
 	svc.AccrueMatchDuration(ctx, "u1", 0)
 	svc.AccrueMatchDuration(ctx, "u1", -10)
-	svc.AccrueMatchDuration(ctx, "u1", 3600)
-
 	got, _ := store.getByID(ctx, it.ID, "u1")
 	if got.AccumulatedSeconds != 0 {
-		t.Fatalf("lapsed/zero should no-op, sec=%d", got.AccumulatedSeconds)
+		t.Fatalf("zero/negative should no-op, sec=%d", got.AccumulatedSeconds)
 	}
 
-	svc.gate = nil
+	svc.AccrueMatchDuration(ctx, "u1", 3600)
+	got, _ = store.getByID(ctx, it.ID, "u1")
+	if got.AccumulatedSeconds != 3600 {
+		t.Fatalf("positive accrue sec=%d", got.AccumulatedSeconds)
+	}
+
 	svc.AccrueMatchDuration(ctx, "u1", 0)
 	got, _ = store.getByID(ctx, it.ID, "u1")
-	if got.AccumulatedSeconds != 0 {
-		t.Fatalf("zero should no-op, sec=%d", got.AccumulatedSeconds)
+	if got.AccumulatedSeconds != 3600 {
+		t.Fatalf("zero after accrue sec=%d", got.AccumulatedSeconds)
 	}
 }
 
@@ -173,6 +177,7 @@ type denyEquipGate struct{}
 
 func (denyEquipGate) AllowCloudSync(context.Context, string) error            { return entitlement.ErrProRequired }
 func (denyEquipGate) AllowStats(context.Context, string) error                { return entitlement.ErrProRequired }
+func (denyEquipGate) AllowHeadToHead(context.Context, string) error           { return entitlement.ErrProRequired }
 func (denyEquipGate) AllowAdvancedStats(context.Context, string) error        { return entitlement.ErrProRequired }
 func (denyEquipGate) AllowPublicLive(context.Context, string) error           { return entitlement.ErrProRequired }
 func (denyEquipGate) AllowLargeTournament(context.Context, string, int) error { return entitlement.ErrProRequired }
@@ -200,6 +205,7 @@ func (p *recPush) SendToUser(_ context.Context, _, _, _ string, data map[string]
 }
 
 type memStore struct {
+	mu    sync.Mutex
 	items []Item
 	seq   int
 }
@@ -225,7 +231,32 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
+func (m *memStore) insertCreate(_ context.Context, userID string, in CreateInput, isPro bool) (Item, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var count int64
+	var hasActive bool
+	for _, it := range m.items {
+		if it.UserID == userID {
+			count++
+			if it.Type == in.Type && it.IsActive {
+				hasActive = true
+			}
+		}
+	}
+	if !isPro && count >= freeEquipmentLimit {
+		return Item{}, entitlement.ErrProRequired
+	}
+	return m.insertLocked(userID, in, !hasActive), nil
+}
+
 func (m *memStore) insert(_ context.Context, userID string, in CreateInput, isActive bool) (Item, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.insertLocked(userID, in, isActive), nil
+}
+
+func (m *memStore) insertLocked(userID string, in CreateInput, isActive bool) Item {
 	now := time.Now()
 	it := Item{
 		ID: m.nextID(), UserID: userID, Type: in.Type, Name: in.Name,
@@ -233,7 +264,7 @@ func (m *memStore) insert(_ context.Context, userID string, in CreateInput, isAc
 		IsActive: isActive, CreatedAt: now, UpdatedAt: now,
 	}
 	m.items = append(m.items, it)
-	return it, nil
+	return it
 }
 
 func (m *memStore) listForUser(_ context.Context, userID string, limit, offset int) ([]Item, int64, error) {

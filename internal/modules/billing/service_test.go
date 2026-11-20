@@ -101,6 +101,16 @@ func TestLoad_OverCapWithoutPro(t *testing.T) {
 	if err := svc.AllowCloudSync(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
 		t.Fatalf("err=%v", err)
 	}
+	if err := svc.AllowStats(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("stats at 10 err=%v", err)
+	}
+	if err := svc.AllowHeadToHead(context.Background(), "u1"); err != nil {
+		t.Fatalf("h2h at 10th free cloud match should stay open: %v", err)
+	}
+	svc11 := newBilling(&fakeStore{count: 11})
+	if err := svc11.AllowHeadToHead(context.Background(), "u1"); !errors.Is(err, entitlement.ErrProRequired) {
+		t.Fatalf("h2h at 11 without Pro should require Pro: %v", err)
+	}
 	if err := svc.AllowLargeTournament(context.Background(), "u1", 8); err != nil {
 		t.Fatalf("8-draw should stay free: %v", err)
 	}

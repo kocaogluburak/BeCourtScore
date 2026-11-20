@@ -523,7 +523,7 @@ func (s *Service) GetHeadToHead(ctx context.Context, viewerID, targetID, sport s
 		return HeadToHead{}, err
 	}
 	if s.gate != nil {
-		if err := s.gate.AllowStats(ctx, viewerID); err != nil {
+		if err := s.gate.AllowHeadToHead(ctx, viewerID); err != nil {
 			return HeadToHead{}, err
 		}
 	}

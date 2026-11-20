@@ -666,3 +666,60 @@ func TestOnMatchDeleted_RemovesActivity(t *testing.T) {
 		t.Fatalf("cascade leftover reactions=%d comments=%d", len(store.reactions), len(store.comments))
 	}
 }
+
+type recPulseHook struct {
+	mu    sync.Mutex
+	calls [][]string
+}
+
+func (p *recPulseHook) NotifyFeedPulse(_ context.Context, userIDs []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cp := append([]string(nil), userIDs...)
+	p.calls = append(p.calls, cp)
+}
+
+func TestFeedInteractions_NotifyPulseHook(t *testing.T) {
+	store := newFakeFeedStore()
+	store.addUser("actor", "Actor")
+	store.addUser("friend", "Friend")
+	store.addFriend("actor", "friend")
+	svc := newFeed(store, nil, nil)
+	hook := &recPulseHook{}
+	svc.SetPulseHook(hook)
+	svc.OnMatchRecorded(context.Background(), rec("actor", "m1"))
+	var actID string
+	for id := range store.activities {
+		actID = id
+	}
+
+	if _, err := svc.AddReaction(context.Background(), "friend", actID, "kudos"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RemoveReaction(context.Background(), "friend", actID); err != nil {
+		t.Fatal(err)
+	}
+	c, err := svc.AddComment(context.Background(), "friend", actID, "great shot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteComment(context.Background(), "friend", actID, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Self-kudos notifies only actor (deduped)
+	if _, err := svc.AddReaction(context.Background(), "actor", actID, "kudos"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(hook.calls) != 5 {
+		t.Fatalf("want 5 pulse notifications, got %d: %+v", len(hook.calls), hook.calls)
+	}
+	for i := 0; i < 4; i++ {
+		if len(hook.calls[i]) != 2 || hook.calls[i][0] != "friend" || hook.calls[i][1] != "actor" {
+			t.Fatalf("call[%d]=%v", i, hook.calls[i])
+		}
+	}
+	if len(hook.calls[4]) != 1 || hook.calls[4][0] != "actor" {
+		t.Fatalf("self call=%v", hook.calls[4])
+	}
+}

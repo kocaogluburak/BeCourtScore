@@ -162,6 +162,7 @@ type denyGate struct{}
 
 func (denyGate) AllowCloudSync(context.Context, string) error  { return entitlement.ErrProRequired }
 func (denyGate) AllowStats(context.Context, string) error      { return entitlement.ErrProRequired }
+func (denyGate) AllowHeadToHead(context.Context, string) error { return entitlement.ErrProRequired }
 func (denyGate) AllowAdvancedStats(context.Context, string) error {
 	return entitlement.ErrProRequired
 }

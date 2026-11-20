@@ -91,6 +91,7 @@ func main() {
 	go achSched.Run(ctx)
 
 	feedSvc := social.NewFeedService(pool, hub, notifySvc)
+	feedSvc.SetPulseHook(feedPulseSink{ach: achSvc})
 	scoreSvc.SetActivitySink(feedActivitySink{feed: feedSvc})
 
 	equipmentSvc := equipment.NewService(pool, notifySvc)
@@ -180,6 +181,17 @@ func (p pulseBoard) WeeklyFriends(ctx context.Context, userID string, start, end
 	return &achievements.PulseFriends{Names: friends.Names, Others: friends.Others}, nil
 }
 
+func (p pulseBoard) WeeklySocial(ctx context.Context, userID string, start, end time.Time) (*achievements.PulseSocial, error) {
+	if p.social == nil {
+		return nil, nil
+	}
+	social, err := p.social.WeeklySocialInteraction(ctx, userID, start, end)
+	if err != nil || social == nil {
+		return nil, err
+	}
+	return &achievements.PulseSocial{Received: social.Received, Given: social.Given}, nil
+}
+
 // pulseAudience adapts social audience queries to achievements.
 type pulseAudience struct{ social *social.Service }
 
@@ -204,6 +216,15 @@ func (m matchPulseSink) OnMatchPulse(ctx context.Context, participantUserIDs []s
 		return
 	}
 	m.ach.NotifyMatchPulse(ctx, participantUserIDs)
+}
+
+type feedPulseSink struct{ ach *achievements.Service }
+
+func (f feedPulseSink) NotifyFeedPulse(ctx context.Context, userIDs []string) {
+	if f.ach == nil {
+		return
+	}
+	f.ach.NotifyFeedPulse(ctx, userIDs)
 }
 
 type nightPulseSink struct{ ach *achievements.Service }
