@@ -72,9 +72,10 @@ make test
 | `internal/modules/billing/service_test.go` | free under cap / 10+ lock / `AllowHeadToHead` open at 10 & locked at 11 / active / grace / expired / Google RTDN / Apple JWS |
 | `internal/platform/sse/hub_test.go` | subscribe/publish |
 | `internal/platform/httpx/pagination_test.go` | page clamp |
-| `internal/modules/equipment/accrual_test.go` | seconds→hours math; active-only accrual both types; nil/zero/lapsed no-op; threshold once + notified_at; refire after reset/lifespan raise; shoes vs string payload; sweep idempotent |
-| `internal/modules/equipment/service_test.go` | CRUD validation, ownership 404, activate swaps one active/type, Pro gate on every method, usage remaining/percent |
-| `internal/modules/equipment/handler_test.go` | list page envelope, create 201, 402 pro_required, 404 foreign, delete 204, activate/reset 200 |
+| `internal/modules/equipment/accrual_test.go` | seconds→hours math; active-only accrual across categories (spare/retired/foreign skipped); nil/zero/lapsed no-op; threshold once + notified_at; NONE categories never remind; refire after reset/lifespan raise; sweep idempotent; per-category reminder copy + payload (`equipment_type`, `sport`, `hours`) |
+| `internal/modules/equipment/service_test.go` | create validation matrix (sport/category/brand XOR/model match/lifespan by threshold/date/attrs), view shape (`display_name`, legacy `type`), parent_item validation, ownership 404, activate swaps one active **per category**, archived not activatable, free limit counts non-retired rows only (archive frees a slot, renew net-zero, concurrent create, Pro lapse), archive, renew (same lineage, copy/override, fresh usage, renewals_this_year, spare stays inactive, guards), list view/sport/category filters, PATCH (nickname/brand/model/lifespan/parent/purchase), display_name chain |
+| `internal/modules/equipment/store_mem_test.go` | in-memory `store` fake with fixture catalog (shared by service/accrual/handler tests) |
+| `internal/modules/equipment/handler_test.go` | list envelope + `view/sport/category_id` filters, create 201 parses new contract, 402 `pro_required`, old-client body → 400, 404 foreign, PATCH legacy `name` alias + set-flags, delete 204, activate/reset 200, archive 200/409, renew empty body 201 + 409/400/404 mapping |
 | `internal/modules/equipment/catalog_test.go` | catalog tree nesting (category→brand→model), empty sports kept, sport filter + invalid sport 400, `GET /v1/equipment/catalog` single object vs all-sports array |
 | `internal/migrate/catalog_seed_test.go` | static check of `036_equipment_catalog.sql`: 16 categories, 34 brands (+hex), 167 models, every §2.1 brand×category pair covered with 2–4 models, RUBBER_FH/BH identical, legacy index kept, backfill after seed |
 | `internal/modules/score/service_test.go` (accruer) | CreateMatch/EndLiveMatch call UsageAccruer with seconds; skip nil/zero |
@@ -139,8 +140,9 @@ make test
 | FEED-06 | done | OnMatchDeleted removes the activity (cascades reactions/comments) |
 | EQUIP-01 | done | duration accrues onto active STRING+SHOES for all authenticated users; inactive/nil/zero no-op |
 | EQUIP-02 | done | threshold push once + notified_at; reset / raised lifespan refires; sweep idempotent |
-| EQUIP-03 | done | Free user list/CRUD/accrual open; create 0→2 OK, 3rd 402, delete<2 re-enables, Pro lapse keeps items; Pro unlimited; transaction lock on create |
+| EQUIP-03 | done | Free limit = **non-retired** rows (2): create 0→2 OK, 3rd 402, delete or **archive** re-enables, renew is net-zero, Pro lapse keeps items; Pro unlimited; transaction lock on create; list/CRUD/accrual open to all authenticated users |
 | EQUIP-04 | done | catalog seed (16 categories / 34 brands / 167 models, AC-8) verified statically + against Postgres 16 (counts, AC-22 backfill 0 unmigrated, idempotent re-run, old-binary INSERT gets `lineage_id`); `GET /v1/equipment/catalog` Bearer, sport filter, 400 on unknown sport |
+| EQUIP-05 | done | archive (retired_at, no replacement, 409 when repeated) and renew (supports_renew only, old row retired + new row same `lineage_id`, empty body copies brand/model/attributes/lifespans/parent, fresh usage, `renewals_this_year`, inherits active slot); activate/uq scoped per `category_id`; `GET /v1/me/equipment?view=active\|archive&sport&category_id`; `display_name` + legacy `type`; verified against Postgres 16 incl. legacy rows
 
 ## Öncelik (2 haftalık)
 

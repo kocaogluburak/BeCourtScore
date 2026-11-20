@@ -19,5 +19,7 @@ func Mount(r chi.Router, svc svcFacade, authMW func(http.Handler) http.Handler) 
 		r.Delete("/v1/me/equipment/{id}", h.del)
 		r.Post("/v1/me/equipment/{id}/activate", h.activate)
 		r.Post("/v1/me/equipment/{id}/reset", h.reset)
+		r.Post("/v1/me/equipment/{id}/archive", h.archive)
+		r.Post("/v1/me/equipment/{id}/renew", h.renew)
 	})
 }
